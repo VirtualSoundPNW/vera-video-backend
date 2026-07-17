@@ -1,0 +1,27 @@
+{
+  "name": "vera-video-backend",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Builds and periodically refreshes a catalog of YouTube videos related to The Vera Project, and serves it to the Vera-Video Android app.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "wrangler types && tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "cf-typegen": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply vera-video --local",
+    "db:migrate:remote": "wrangler d1 migrations apply vera-video --remote"
+  },
+  "dependencies": {
+    "hono": "^4.12.30"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.5",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.0",
+    "wrangler": "^4.111.0"
+  }
+}

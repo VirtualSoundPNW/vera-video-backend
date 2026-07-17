@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # `wrangler types` reads .dev.vars for secret names; CI has no real key,
+      # and an empty value is enough to generate the types.
+      - name: Provide placeholder dev vars
+        run: cp .dev.vars.example .dev.vars
+
+      - run: npm run typecheck
+      - run: npm test

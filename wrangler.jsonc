@@ -1,0 +1,34 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "vera-video-backend",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-16",
+  "observability": {
+    "enabled": true
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "vera-video",
+      // Replace with the id printed by: wrangler d1 create vera-video
+      "database_id": "REPLACE_WITH_D1_DATABASE_ID",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "triggers": {
+    // Two schedules, distinguished by controller.cron in src/index.ts:
+    //  - discovery runs every 6h and crawls ONE rotating source per run
+    //  - refresh runs nightly and re-checks a batch of the stalest videos
+    "crons": ["0 */6 * * *", "45 3 * * *"]
+  },
+  "vars": {
+    // Max videos.list ids re-checked per refresh run (YouTube caps at 50/call).
+    "REFRESH_BATCH_SIZE": "50",
+    // Max results requested per discovery page (YouTube caps at 50).
+    "DISCOVERY_PAGE_SIZE": "50",
+    // Keep score threshold for the relevance filter. See src/filter.ts.
+    "RELEVANCE_THRESHOLD": "3"
+  }
+  // Secret (set with `wrangler secret put YOUTUBE_API_KEY`, never committed):
+  //   YOUTUBE_API_KEY - YouTube Data API v3 key, restricted to this Worker.
+}

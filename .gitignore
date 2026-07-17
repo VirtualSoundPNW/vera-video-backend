@@ -141,3 +141,14 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# Cloudflare Workers
+.dev.vars
+.dev.vars.*
+!.dev.vars.example
+.wrangler/
+worker-configuration.d.ts
+
+
+# Visual Studio
+.vs/
