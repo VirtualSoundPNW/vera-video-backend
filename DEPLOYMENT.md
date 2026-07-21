@@ -203,11 +203,11 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - run: npm ci
@@ -223,14 +223,14 @@ jobs:
 
       # Migrations first: new code must never meet an old schema.
       - name: Apply D1 migrations
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply vera-video --remote
 
       - name: Deploy
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
@@ -243,7 +243,7 @@ jobs:
             https://vera-video-backend.<subdomain>.workers.dev/health
 ```
 
-`cloudflare/wrangler-action@v3` is current and installs Wrangler v4 by default,
+`cloudflare/wrangler-action@v4` is current and installs Wrangler v4 by default,
 matching the local devDependency.
 
 ### 2.4 Make the gate real
