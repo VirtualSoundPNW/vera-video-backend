@@ -29,6 +29,7 @@ Routing uses **Hono**; tests run in the real Workers runtime via
 | `GET /catalog` | Full catalog: active videos, newest first. |
 | `GET /catalog?since=<iso8601>` | Delta: only rows changed since the cursor, including removals so clients can prune. |
 | `GET /stats` | Catalog size and recent crawl history. |
+| `GET /status?key=<STATUS_PAGE_KEY>` | Human-readable dashboard: videos over time, quota burn, crawl errors, endpoint traffic. Gated by a secret key; wrong/missing key 404s. |
 | `GET /health` | Liveness. |
 
 Responses carry an `ETag`; send it back as `If-None-Match` to get a `304`.
@@ -114,9 +115,10 @@ npx wrangler d1 create vera-video
 npm run db:migrate:local     # local
 npm run db:migrate:remote    # production
 
-# 3. Provide a YouTube Data API v3 key.
-cp .dev.vars.example .dev.vars            # local: paste the key in
+# 3. Provide a YouTube Data API v3 key and a status-page key.
+cp .dev.vars.example .dev.vars            # local: paste both in (STATUS_PAGE_KEY can be anything)
 npx wrangler secret put YOUTUBE_API_KEY   # production
+npx wrangler secret put STATUS_PAGE_KEY   # production
 
 # 4. Run it.
 npm run dev
@@ -157,6 +159,8 @@ after changing bindings.
 | `src/youtube.ts` | YouTube Data API client and quota costs |
 | `src/filter.ts` | Relevance scoring |
 | `src/db.ts` | D1 queries |
+| `src/charts.ts` | Dependency-free inline SVG charts |
+| `src/status.ts` | Data gathering and HTML for `GET /status` |
 | `migrations/` | D1 schema |
 
 ## License

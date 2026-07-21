@@ -1,3 +1,6 @@
 # Copy to .dev.vars and fill in for local development.
 # Production uses: wrangler secret put YOUTUBE_API_KEY
 YOUTUBE_API_KEY=""
+# Production uses: wrangler secret put STATUS_PAGE_KEY
+# Query-param key for GET /status?key=... — pick any random string locally.
+STATUS_PAGE_KEY=""

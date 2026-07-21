@@ -10,6 +10,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import * as db from "./db";
 import { jobForCron, runDiscovery, runRefresh } from "./crawler";
+import { gatherStatusData, renderStatusPage } from "./status";
 import type { CatalogResponse } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -17,6 +18,17 @@ const app = new Hono<{ Bindings: Env }>();
 // The catalog is public, read-only data; allow browsers to read it for
 // debugging dashboards. The Android client is unaffected by CORS.
 app.use("/*", cors({ origin: "*", allowMethods: ["GET", "HEAD", "OPTIONS"] }));
+
+// Aggregate usage per (day, path) for the /status page. A tracking hiccup
+// must never fail the real request, hence the swallowed catch.
+app.use("/*", async (c, next) => {
+  await next();
+  try {
+    await db.recordEndpointHit(c.env.DB, new Date().toISOString().slice(0, 10), c.req.path, c.res.status);
+  } catch (err) {
+    console.error("failed to record endpoint stat", err);
+  }
+});
 
 app.get("/health", (c) => c.json({ ok: true, service: "vera-video-backend" }));
 
@@ -72,6 +84,21 @@ app.get("/catalog", async (c) => {
 app.get("/stats", async (c) => {
   const [meta, crawls] = await Promise.all([db.catalogMeta(c.env.DB), db.recentCrawls(c.env.DB)]);
   return c.json({ activeVideos: meta.count, lastUpdated: meta.maxUpdated, recentCrawls: crawls });
+});
+
+/** Operator dashboard: videos over time, quota burn, errors, endpoint usage. */
+app.get("/status", async (c) => {
+  if (c.req.query("key") !== c.env.STATUS_PAGE_KEY) {
+    // 404, not 401/403 — don't confirm to a scanner that this route exists.
+    return c.text("not found", 404);
+  }
+
+  const data = await gatherStatusData(c.env.DB);
+  return c.html(renderStatusPage(data), 200, {
+    // The URL carries a secret in its query string — must never be cached
+    // anywhere the key could leak from (browser or shared/edge cache).
+    "Cache-Control": "private, no-store",
+  });
 });
 
 app.notFound((c) => c.json({ error: "not found" }, 404));

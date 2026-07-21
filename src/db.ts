@@ -305,3 +305,122 @@ export async function knownVideoIds(db: D1Database, videoIds: string[]): Promise
     .all<{ video_id: string }>();
   return new Set(results.map((r) => r.video_id));
 }
+
+/* ---------------------------- status page -------------------------------- */
+
+export interface DayCount {
+  day: string;
+  count: number;
+}
+
+/** New rows added to the catalog per day, most recent `sinceDays` days. */
+export async function videosAddedByDay(db: D1Database, sinceDays: number): Promise<DayCount[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT date(first_seen) AS day, COUNT(*) AS count
+         FROM videos
+        WHERE first_seen >= date('now', ?)
+        GROUP BY day
+        ORDER BY day`
+    )
+    .bind(`-${sinceDays} days`)
+    .all<DayCount>();
+  return results;
+}
+
+/** YouTube quota spent per day, most recent `sinceDays` days. */
+export async function quotaUsedByDay(db: D1Database, sinceDays: number): Promise<DayCount[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT date(started_at) AS day, SUM(api_units) AS count
+         FROM crawl_log
+        WHERE started_at >= date('now', ?)
+        GROUP BY day
+        ORDER BY day`
+    )
+    .bind(`-${sinceDays} days`)
+    .all<DayCount>();
+  return results;
+}
+
+/** Quota spent so far today, to compare against the 10,000/day cap. */
+export async function quotaUsedToday(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(`SELECT COALESCE(SUM(api_units), 0) AS count FROM crawl_log WHERE date(started_at) = date('now')`)
+    .first<{ count: number }>();
+  return row?.count ?? 0;
+}
+
+/** Most recent crawl runs that failed, for the status page's error list. */
+export async function recentCrawlErrors(db: D1Database, limit = 20): Promise<unknown[]> {
+  const { results } = await db
+    .prepare(`SELECT * FROM crawl_log WHERE error IS NOT NULL ORDER BY started_at DESC LIMIT ?`)
+    .bind(limit)
+    .all();
+  return results;
+}
+
+/** Catalog split by status (active/removed/rejected). */
+export async function videosByStatus(db: D1Database): Promise<Record<VideoStatus, number>> {
+  const { results } = await db.prepare(`SELECT status, COUNT(*) AS count FROM videos GROUP BY status`).all<{
+    status: VideoStatus;
+    count: number;
+  }>();
+  const out: Record<VideoStatus, number> = { active: 0, removed: 0, rejected: 0 };
+  for (const row of results) out[row.status] = row.count;
+  return out;
+}
+
+/**
+ * Record one HTTP hit against (day, path), aggregated rather than per-row so
+ * this table stays small (routes x days). Never throws to the caller —
+ * intended to be awaited from a middleware that must not fail the real
+ * response over a stats-tracking hiccup.
+ */
+export async function recordEndpointHit(db: D1Database, day: string, path: string, status: number): Promise<void> {
+  await db
+    .prepare(
+      `INSERT INTO endpoint_stats (day, path, hits, errors) VALUES (?, ?, 1, ?)
+         ON CONFLICT (day, path) DO UPDATE SET
+           hits = hits + 1,
+           errors = errors + excluded.errors`
+    )
+    .bind(day, path, status >= 500 ? 1 : 0)
+    .run();
+}
+
+export interface EndpointUsage {
+  path: string;
+  hits: number;
+  errors: number;
+}
+
+/** Per-path totals over the last `sinceDays` days, busiest first. */
+export async function endpointUsage(db: D1Database, sinceDays: number): Promise<EndpointUsage[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT path, SUM(hits) AS hits, SUM(errors) AS errors
+         FROM endpoint_stats
+        WHERE day >= date('now', ?)
+        GROUP BY path
+        ORDER BY hits DESC`
+    )
+    .bind(`-${sinceDays} days`)
+    .all<EndpointUsage>();
+  return results;
+}
+
+/** Total hits across all paths per day, for the traffic chart. */
+export async function endpointHitsByDay(db: D1Database, sinceDays: number): Promise<DayCount[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT day, SUM(hits) AS count
+         FROM endpoint_stats
+        WHERE day >= date('now', ?)
+        GROUP BY day
+        ORDER BY day`
+    )
+    .bind(`-${sinceDays} days`)
+    .all<DayCount>();
+  return results;
+}
