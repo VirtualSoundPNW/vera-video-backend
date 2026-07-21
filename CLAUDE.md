@@ -46,6 +46,8 @@ curl "http://localhost:8787/stats"                                        # insp
 | `src/filter.ts` | Relevance scoring |
 | `src/db.ts` | All D1 access |
 | `src/env.ts` | Var parsing (`Env` itself is ambient — see below) |
+| `src/charts.ts` | Dependency-free inline SVG chart helpers |
+| `src/status.ts` | Data gathering + HTML for `GET /status` |
 | `migrations/` | D1 schema |
 
 ## Design decisions worth knowing before changing things
@@ -75,6 +77,11 @@ curl "http://localhost:8787/stats"                                        # insp
 - **The Vera Project's channel ID is deliberately not hardcoded.** Inventing a
   plausible `UC...` would silently crawl the wrong channel. The crawler records
   every channel it meets as `neutral` for an operator to promote (see README).
+- **`GET /status` is gated by `?key=` against `STATUS_PAGE_KEY`, not public.**
+  A wrong/missing key 404s rather than 401/403, so a scanner can't tell the
+  route exists. Because the secret rides in the URL, the response always sets
+  `Cache-Control: private, no-store` — don't let that regress or the key can
+  leak into a shared/edge cache.
 
 ### The filter is the part that needs tuning
 
@@ -106,9 +113,9 @@ weights blind.
 
 ## Hard constraints
 
-- **Never commit secrets.** `YOUTUBE_API_KEY` lives in `.dev.vars` (gitignored)
-  locally and `wrangler secret put` in production. `.dev.vars.example` is the
-  only one that gets committed.
+- **Never commit secrets.** `YOUTUBE_API_KEY` and `STATUS_PAGE_KEY` live in
+  `.dev.vars` (gitignored) locally and `wrangler secret put` in production.
+  `.dev.vars.example` is the only one that gets committed.
 - **Watch the quota.** Default is 10,000 units/day; the current schedule spends
   ~400. Any change that raises `search.list` frequency or page depth needs to be
   checked against that budget.

@@ -207,3 +207,76 @@ describe("knownVideoIds", () => {
     expect(await db.knownVideoIds(env.DB, [])).toEqual(new Set());
   });
 });
+
+describe("status page queries", () => {
+  beforeEach(async () => {
+    await reset();
+    await env.DB.batch([env.DB.prepare("DELETE FROM crawl_log"), env.DB.prepare("DELETE FROM endpoint_stats")]);
+  });
+
+  it("buckets videos added by day, ignoring rows older than the window", async () => {
+    const today = new Date().toISOString();
+    await db.upsertVideos(env.DB, [video("recent")], today);
+    await env.DB.prepare("UPDATE videos SET first_seen = ? WHERE video_id = 'recent'").bind(today).run();
+
+    await db.upsertVideos(env.DB, [video("ancient")], today);
+    await env.DB.prepare("UPDATE videos SET first_seen = '2000-01-01T00:00:00Z' WHERE video_id = 'ancient'").run();
+
+    const rows = await db.videosAddedByDay(env.DB, 30);
+    const total = rows.reduce((sum, r) => sum + r.count, 0);
+    expect(total).toBe(1);
+  });
+
+  it("sums quota used today across multiple crawl runs", async () => {
+    const at = new Date().toISOString();
+    const a = await db.startCrawl(env.DB, "discovery", null, at);
+    await db.finishCrawl(env.DB, a, { apiUnits: 101, fetched: 0, kept: 0, rejected: 0, added: 0 }, at);
+    const b = await db.startCrawl(env.DB, "refresh", null, at);
+    await db.finishCrawl(env.DB, b, { apiUnits: 50, fetched: 0, kept: 0, rejected: 0, added: 0 }, at);
+
+    expect(await db.quotaUsedToday(env.DB)).toBe(151);
+  });
+
+  it("lists only crawls that recorded an error, most recent first", async () => {
+    const at = new Date().toISOString();
+    const ok = await db.startCrawl(env.DB, "discovery", null, at);
+    await db.finishCrawl(env.DB, ok, { apiUnits: 1, fetched: 0, kept: 0, rejected: 0, added: 0 }, at);
+    const bad = await db.startCrawl(env.DB, "discovery", null, at);
+    await db.finishCrawl(env.DB, bad, { apiUnits: 1, fetched: 0, kept: 0, rejected: 0, added: 0, error: "boom" }, at);
+
+    const errors = (await db.recentCrawlErrors(env.DB, 20)) as { id: number; error: string }[];
+    expect(errors).toHaveLength(1);
+    expect(errors[0]!.error).toBe("boom");
+  });
+
+  it("splits the catalog by status", async () => {
+    const at = new Date().toISOString();
+    await db.upsertVideos(
+      env.DB,
+      [video("a", { status: "active" }), video("b", { status: "active" }), video("c", { status: "rejected" })],
+      at
+    );
+    expect(await db.videosByStatus(env.DB)).toEqual({ active: 2, removed: 0, rejected: 1 });
+  });
+
+  it("increments hits on repeated calls instead of overwriting the row", async () => {
+    await db.recordEndpointHit(env.DB, "2026-07-20", "/catalog", 200);
+    await db.recordEndpointHit(env.DB, "2026-07-20", "/catalog", 200);
+    await db.recordEndpointHit(env.DB, "2026-07-20", "/catalog", 500);
+
+    const row = await env.DB.prepare("SELECT hits, errors FROM endpoint_stats WHERE day = ? AND path = ?")
+      .bind("2026-07-20", "/catalog")
+      .first<{ hits: number; errors: number }>();
+    expect(row).toEqual({ hits: 3, errors: 1 });
+  });
+
+  it("reports per-path usage busiest first", async () => {
+    const today = new Date().toISOString().slice(0, 10);
+    await db.recordEndpointHit(env.DB, today, "/catalog", 200);
+    await db.recordEndpointHit(env.DB, today, "/catalog", 200);
+    await db.recordEndpointHit(env.DB, today, "/health", 200);
+
+    const usage = await db.endpointUsage(env.DB, 30);
+    expect(usage[0]).toMatchObject({ path: "/catalog", hits: 2 });
+  });
+});

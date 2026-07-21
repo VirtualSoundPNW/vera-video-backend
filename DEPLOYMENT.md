@@ -63,14 +63,17 @@ npx wrangler d1 execute vera-video --remote --command "SELECT kind, value FROM s
 
 You should see the four seeded search queries.
 
-### 1.4 Set the secret
+### 1.4 Set the secrets
 
 ```bash
 npx wrangler secret put YOUTUBE_API_KEY      # paste the key when prompted
+npx wrangler secret put STATUS_PAGE_KEY      # any random string — gates GET /status
 ```
 
 Secrets live only in Cloudflare. `wrangler deploy` does **not** touch or clear
-them, which is why CI never needs the YouTube key.
+them, which is why CI never needs either key. `STATUS_PAGE_KEY` is checked
+against `?key=` on `GET /status`; a wrong or missing key 404s rather than
+401/403, so it doesn't confirm the route's existence to a scanner.
 
 ### 1.5 First deploy
 
@@ -88,6 +91,11 @@ Settings**) or attach a custom route.
 curl https://vera-video-backend.<subdomain>.workers.dev/health
 curl https://vera-video-backend.<subdomain>.workers.dev/catalog   # {"count":0,...} — expected before the first crawl
 ```
+
+The human-readable dashboard is `https://vera-video-backend.<subdomain>.workers.dev/status?key=<STATUS_PAGE_KEY>`
+— videos added over time, quota burn against the 10,000/day cap, recent crawl
+errors, and endpoint traffic. Worth bookmarking (with the key baked into the
+URL) since there's no other way in without it.
 
 ### 1.7 Force the first crawl (don't wait 6 hours)
 
@@ -296,6 +304,6 @@ only if the discovery cadence or page depth increases.
 
 | What | How |
 |---|---|
-| Is the crawler healthy? | `GET /stats` — recent crawls, `api_units`, `error` |
+| Is the crawler healthy? | `GET /stats` — recent crawls, `api_units`, `error` — or `GET /status?key=...` for the human-readable version |
 | Is the filter drifting? | `SELECT title, score, status FROM videos ORDER BY updated_at DESC` |
 | Worker errors | `npx wrangler tail`, or the Workers → Logs dashboard (observability is enabled in `wrangler.jsonc`) |
