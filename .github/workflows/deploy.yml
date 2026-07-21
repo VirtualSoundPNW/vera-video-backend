@@ -1,0 +1,54 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]        # i.e. a merged PR
+  workflow_dispatch:         # manual re-run
+
+concurrency:
+  group: deploy-production   # never let two deploys race
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # `wrangler types` reads .dev.vars for secret *names*; CI has no real key
+      # and an empty value is enough to generate the Env type.
+      - name: Provide placeholder dev vars
+        run: cp .dev.vars.example .dev.vars
+
+      # Gate the deploy on the same checks CI runs on the PR.
+      - run: npm run typecheck
+      - run: npm test
+
+      # Migrations first: new code must never meet an old schema.
+      - name: Apply D1 migrations
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: d1 migrations apply vera-video --remote
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy
+
+      - name: Smoke test
+        run: |
+          sleep 5
+          curl --fail --silent --show-error \
+            https://vera-video-backend.<subdomain>.workers.dev/health
