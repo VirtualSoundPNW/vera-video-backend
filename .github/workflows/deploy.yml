@@ -51,4 +51,4 @@ jobs:
         run: |
           sleep 5
           curl --fail --silent --show-error \
-            https://vera-video-backend.<subdomain>.workers.dev/health
+            https://vera-video-backend.virtualsoundnw.workers.dev/health
