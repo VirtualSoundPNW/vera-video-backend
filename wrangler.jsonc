@@ -13,11 +13,6 @@
 			// Replace with the id printed by: wrangler d1 create vera-video
 			"database_id": "0b723c5f-6da9-454f-9973-54530e52963d",
 			"migrations_dir": "migrations"
-		},
-		{
-			"binding": "DB",
-			"database_name": "vera-video",
-			"database_id": "0b723c5f-6da9-454f-9973-54530e52963d"
 		}
 	],
 	"triggers": {
