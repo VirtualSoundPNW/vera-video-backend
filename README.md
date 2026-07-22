@@ -29,7 +29,7 @@ Routing uses **Hono**; tests run in the real Workers runtime via
 | `GET /catalog` | Full catalog: active videos, newest first. |
 | `GET /catalog?since=<iso8601>` | Delta: only rows changed since the cursor, including removals so clients can prune. |
 | `GET /stats` | Catalog size and recent crawl history. |
-| `GET /status?key=<STATUS_PAGE_KEY>` | Human-readable dashboard: videos over time, quota burn, crawl errors, endpoint traffic. Gated by a secret key; wrong/missing key 404s. |
+| `GET /status?key=<STATUS_PAGE_KEY>&days=<7\|30\|90>` | Human-readable dashboard: videos over time, quota burn, crawl errors, endpoint traffic — each chart has axis scales and gridlines, and `days` (default 30) picks the window. Gated by a secret key; wrong/missing key 404s. |
 | `GET /health` | Liveness. |
 
 Responses carry an `ETag`; send it back as `If-None-Match` to get a `304`.

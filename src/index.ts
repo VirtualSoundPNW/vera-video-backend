@@ -10,7 +10,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import * as db from "./db";
 import { jobForCron, runDiscovery, runRefresh } from "./crawler";
-import { gatherStatusData, renderStatusPage } from "./status";
+import { gatherStatusData, parseWindowDays, renderStatusPage } from "./status";
 import type { CatalogResponse } from "./types";
 
 const app = new Hono<{ Bindings: Env }>();
@@ -88,13 +88,15 @@ app.get("/stats", async (c) => {
 
 /** Operator dashboard: videos over time, quota burn, errors, endpoint usage. */
 app.get("/status", async (c) => {
-  if (c.req.query("key") !== c.env.STATUS_PAGE_KEY) {
+  const key = c.req.query("key");
+  if (key !== c.env.STATUS_PAGE_KEY) {
     // 404, not 401/403 — don't confirm to a scanner that this route exists.
     return c.text("not found", 404);
   }
 
-  const data = await gatherStatusData(c.env.DB);
-  return c.html(renderStatusPage(data), 200, {
+  const windowDays = parseWindowDays(c.req.query("days"));
+  const data = await gatherStatusData(c.env.DB, windowDays);
+  return c.html(renderStatusPage(data, key), 200, {
     // The URL carries a secret in its query string — must never be cached
     // anywhere the key could leak from (browser or shared/edge cache).
     "Cache-Control": "private, no-store",

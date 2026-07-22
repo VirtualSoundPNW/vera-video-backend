@@ -29,6 +29,26 @@ describe("GET /status", () => {
     const body = await res.text();
     expect(body).toContain("vera-video-backend");
   });
+
+  it("defaults to a 30-day window and offers 7/30/90 range links with the key preserved", async () => {
+    const res = await SELF.fetch(`https://backend.test/status?key=${env.STATUS_PAGE_KEY}`);
+    const body = await res.text();
+    expect(body).toContain("last 30 days");
+    expect(body).toContain(`?key=${env.STATUS_PAGE_KEY}&amp;days=7`);
+    expect(body).toContain(`?key=${env.STATUS_PAGE_KEY}&amp;days=90`);
+  });
+
+  it("honors a valid ?days= override", async () => {
+    const res = await SELF.fetch(`https://backend.test/status?key=${env.STATUS_PAGE_KEY}&days=7`);
+    const body = await res.text();
+    expect(body).toContain("last 7 days");
+  });
+
+  it("falls back to the default window for an unlisted ?days= value", async () => {
+    const res = await SELF.fetch(`https://backend.test/status?key=${env.STATUS_PAGE_KEY}&days=9999`);
+    const body = await res.text();
+    expect(body).toContain("last 30 days");
+  });
 });
 
 describe("endpoint usage tracking", () => {
