@@ -6,9 +6,22 @@ import * as db from "./db";
 /** YouTube's default per-project cap; not something this app configures. */
 const DAILY_QUOTA_CAP = 10_000;
 
-const WINDOW_DAYS = 30;
+/**
+ * Preset time-range options for the charts. A fixed list (rather than any
+ * integer) keeps the D1 queries cheap and predictable, matches the pattern
+ * `since` validation uses on `/catalog`, and keeps the range picker UI simple
+ * (a handful of links) with no client JS.
+ */
+export const WINDOW_OPTIONS = [7, 30, 90] as const;
+export const DEFAULT_WINDOW_DAYS = 30;
+
+export function parseWindowDays(raw: string | undefined): number {
+  const parsed = Number.parseInt(raw ?? "", 10);
+  return (WINDOW_OPTIONS as readonly number[]).includes(parsed) ? parsed : DEFAULT_WINDOW_DAYS;
+}
 
 export interface StatusData {
+  windowDays: number;
   activeVideos: number;
   lastUpdated: string | null;
   videosByStatus: Record<string, number>;
@@ -20,19 +33,20 @@ export interface StatusData {
   endpointHitsByDay: db.DayCount[];
 }
 
-export async function gatherStatusData(d1: D1Database): Promise<StatusData> {
+export async function gatherStatusData(d1: D1Database, windowDays: number): Promise<StatusData> {
   const [meta, statusCounts, videosByDay, quotaToday, quotaByDay, errors, usage, hitsByDay] = await Promise.all([
     db.catalogMeta(d1),
     db.videosByStatus(d1),
-    db.videosAddedByDay(d1, WINDOW_DAYS),
+    db.videosAddedByDay(d1, windowDays),
     db.quotaUsedToday(d1),
-    db.quotaUsedByDay(d1, WINDOW_DAYS),
+    db.quotaUsedByDay(d1, windowDays),
     db.recentCrawlErrors(d1, 20),
-    db.endpointUsage(d1, WINDOW_DAYS),
-    db.endpointHitsByDay(d1, WINDOW_DAYS),
+    db.endpointUsage(d1, windowDays),
+    db.endpointHitsByDay(d1, windowDays),
   ]);
 
   return {
+    windowDays,
     activeVideos: meta.count,
     lastUpdated: meta.maxUpdated,
     videosByStatus: statusCounts,
@@ -58,8 +72,20 @@ function errorRow(row: unknown): string {
   return `<tr><td>${escapeHtml(r.started_at)}</td><td>${escapeHtml(r.kind)}</td><td>${escapeHtml(r.error)}</td></tr>`;
 }
 
-export function renderStatusPage(data: StatusData): string {
+/** Range-picker links that preserve the secret key and just swap `days`. */
+function rangePicker(key: string, activeDays: number): string {
+  const links = WINDOW_OPTIONS.map((days) => {
+    const href = `?key=${encodeURIComponent(key)}&days=${days}`;
+    return days === activeDays
+      ? `<span class="range-active">${days}d</span>`
+      : `<a href="${escapeHtml(href)}">${days}d</a>`;
+  }).join(" · ");
+  return `<p class="range">Range: ${links}</p>`;
+}
+
+export function renderStatusPage(data: StatusData, key: string): string {
   const quotaPct = Math.min(100, Math.round((data.quotaUsedToday / DAILY_QUOTA_CAP) * 100));
+  const range = rangePicker(key, data.windowDays);
 
   return `<!doctype html>
 <html lang="en">
@@ -80,11 +106,15 @@ export function renderStatusPage(data: StatusData): string {
   table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
   th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid currentColor; }
   .muted { opacity: 0.7; }
+  .range { margin-top: 0.5rem; }
+  .range a { color: inherit; }
+  .range-active { font-weight: 600; text-decoration: underline; }
 </style>
 </head>
 <body>
 <h1>vera-video-backend</h1>
 <p class="muted">Generated ${escapeHtml(new Date().toISOString())}</p>
+${range}
 
 <div class="tiles">
   <div class="tile"><span class="n">${data.activeVideos}</span><span class="label">active videos</span></div>
@@ -92,19 +122,19 @@ export function renderStatusPage(data: StatusData): string {
   <div class="tile"><span class="n">${data.lastUpdated ? escapeHtml(data.lastUpdated) : "—"}</span><span class="label">catalog last updated</span></div>
 </div>
 
-<h2>Videos added (last ${WINDOW_DAYS} days)</h2>
+<h2>Videos added (last ${data.windowDays} days)</h2>
 ${sparkline(toPoints(data.videosAddedByDay))}
 
 <h2>Catalog by status</h2>
 ${barChart(Object.entries(data.videosByStatus).map(([label, value]) => ({ label, value })))}
 
-<h2>YouTube quota used per day (last ${WINDOW_DAYS} days)</h2>
+<h2>YouTube quota used per day (last ${data.windowDays} days)</h2>
 ${sparkline(toPoints(data.quotaUsedByDay))}
 
-<h2>API traffic (last ${WINDOW_DAYS} days)</h2>
+<h2>API traffic (last ${data.windowDays} days)</h2>
 ${sparkline(toPoints(data.endpointHitsByDay))}
 
-<h2>Endpoint usage (last ${WINDOW_DAYS} days)</h2>
+<h2>Endpoint usage (last ${data.windowDays} days)</h2>
 ${barChart(data.endpointUsage.map((u) => ({ label: u.path, value: u.hits })))}
 
 <h2>Recent crawl errors</h2>

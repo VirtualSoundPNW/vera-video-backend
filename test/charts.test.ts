@@ -29,6 +29,36 @@ describe("sparkline", () => {
     expect(svg).not.toContain("<script>alert(1)</script>");
     expect(svg).toContain("&lt;script&gt;");
   });
+
+  it("labels the y axis with 0 and the max value", () => {
+    const svg = sparkline([
+      { label: "2026-07-01", value: 0 },
+      { label: "2026-07-02", value: 42 },
+    ]);
+    expect(svg).toContain(">0<");
+    expect(svg).toContain(">42<");
+  });
+
+  it("labels the x axis with (shortened) dates, not just tooltips", () => {
+    const svg = sparkline([
+      { label: "2026-07-01", value: 1 },
+      { label: "2026-07-15", value: 2 },
+      { label: "2026-07-30", value: 3 },
+    ]);
+    expect(svg).toContain(">07-01<");
+    expect(svg).toContain(">07-30<");
+    expect(svg).not.toContain("2026-07-01<");
+  });
+
+  it("caps x-axis ticks instead of printing one label per day", () => {
+    const points = Array.from({ length: 30 }, (_, i) => ({
+      label: `2026-07-${String(i + 1).padStart(2, "0")}`,
+      value: i,
+    }));
+    const svg = sparkline(points);
+    const tickCount = (svg.match(/text-anchor="middle" font-size="10"/g) ?? []).length;
+    expect(tickCount).toBeLessThanOrEqual(6);
+  });
 });
 
 describe("barChart", () => {
@@ -49,5 +79,14 @@ describe("barChart", () => {
   it("escapes label text", () => {
     const svg = barChart([{ label: "<b>bold</b>", value: 1 }]);
     expect(svg).not.toContain("<b>bold</b>");
+  });
+
+  it("draws a value scale across the top, not just per-bar numbers", () => {
+    const svg = barChart([
+      { label: "/catalog", value: 8 },
+      { label: "/health", value: 2 },
+    ]);
+    expect(svg.match(/<line/g)?.length).toBe(3); // 0%, 50%, 100% gridlines
+    expect(svg).toContain(">8<");
   });
 });
