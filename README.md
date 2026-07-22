@@ -57,17 +57,17 @@ Each response includes a `cursor` — pass it as `since` on the next sync.
 
 Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 
-- **Discovery** (`0 * * * *`, hourly) — crawls the least-recently-crawled
-  source, then keeps going (repeating the same source if it's the only one
-  enabled, to page deeper into its backlog) until it spends
-  `DISCOVERY_QUOTA_TARGET` (default 100 units) or hits the
+- **Discovery** (`*/20 * * * *`, every 20 minutes) — crawls the
+  least-recently-crawled source, then keeps going (repeating the same source
+  if it's the only one enabled, to page deeper into its backlog) until it
+  spends `DISCOVERY_QUOTA_TARGET` (default 100 units) or hits the
   `MAX_SOURCES_PER_RUN` safety cap (4), whichever comes first. Search sources
   cost 100 quota units per page; results are then hydrated with a
   `videos.list` call (1 unit) because search snippets carry no tags,
   truncated descriptions and no duration — one extra unit buys much better
   filtering input. Channel sources cost 1 unit/page via `playlistItems.list`
   instead. ~101 units for a search source, ~2 for a channel one — so a single
-  cheap channel source no longer leaves most of the hour's budget unspent.
+  cheap channel source no longer leaves most of a run's budget unspent.
 - **Refresh** (`45 3 * * *`) — re-checks the 50 stalest videos in one
   `videos.list` call (1 unit): updates metadata, marks vanished videos
   `removed`, and re-applies the filter so rule changes reach existing rows.
@@ -75,11 +75,14 @@ Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 `MAX_SOURCES_PER_RUN` is what actually keeps each invocation inside the
 free-tier envelope (10 ms CPU, 50 subrequests) — one source with results costs
 ~10 subrequests. With 10 rotating sources (5 search, 5 channel uploads) and
-hourly discovery, daily spend is up to ~2,400 of the 10,000 units in the
-worst case (every run reaching the 100-unit target) and usually less — check
-`GET /status` for the real figure. There's room to add more sources, or raise
-`DISCOVERY_QUOTA_TARGET`, before the cadence or source count needs to trade
-off against quota.
+discovery every 20 minutes (72 runs/day), daily spend is up to ~7,200 of the
+10,000 units in the worst case (every run reaching the 100-unit target) and
+usually less — check `GET /status` for the real figure. That's ~72% of the
+daily cap in the worst case, so there's limited room left to add more
+sources or raise `DISCOVERY_QUOTA_TARGET` further without trading off
+against quota; the 72 invocations/day and the extra D1 reads/writes they
+bring are trivial against Workers' 100k requests/day and D1's 5M rows
+read/day free-tier limits.
 
 ### Relevance filtering
 
@@ -152,7 +155,7 @@ npm run deploy
 Trigger the cron jobs by hand against `wrangler dev`:
 
 ```bash
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/6+*+*+*"   # discovery
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/20+*+*+*+*"  # discovery
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"    # refresh
 curl "http://localhost:8787/stats"                                        # inspect the result
 ```

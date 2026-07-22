@@ -26,7 +26,7 @@ ships code and schema migrations.
    read-only YouTube metadata against a 10,000 unit/day quota.
 
 5. Note the default quota: **10,000 units/day**. The current schedule spends
-   up to ~2,400 in the worst case, usually less. You do not need a quota increase.
+   up to ~7,200 in the worst case, usually less. You do not need a quota increase.
 
 ### 1.2 Create the D1 database
 
@@ -97,7 +97,7 @@ The human-readable dashboard is `https://vera-video-backend.<subdomain>.workers.
 errors, and endpoint traffic. Worth bookmarking (with the key baked into the
 URL) since there's no other way in without it.
 
-### 1.7 Force the first crawl (don't wait an hour)
+### 1.7 Force the first crawl (don't wait 20 minutes)
 
 Cloudflare has no "run cron now" button, and the `/cdn-cgi/handler/scheduled`
 trigger endpoint only exists in `wrangler dev`. The trick is to run dev against
@@ -106,7 +106,7 @@ trigger endpoint only exists in `wrangler dev`. The trick is to run dev against
 ```bash
 npx wrangler dev --remote          # runs on Cloudflare's edge, using the real D1 + secret
 # in another shell:
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/6+*+*+*"
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/20+*+*+*+*"
 curl "http://localhost:8787/stats"
 ```
 
@@ -296,10 +296,12 @@ main reason to keep migrations additive.
 ## Costs
 
 Free tier covers this comfortably: Workers 100k requests/day, D1 5 GB storage
-and 5M row reads/day. The catalog is hundreds of rows and a few hundred requests
-a day. The YouTube quota (up to ~2,400 of 10,000 units/day, worst case) is the
-tightest budget, and only if the discovery cadence, page depth, source count,
-or `DISCOVERY_QUOTA_TARGET` increases further.
+and 5M row reads/day. Discovery running every 20 minutes is ~72 invocations/day
+plus 1 nightly refresh — nowhere near the Workers or D1 caps. The YouTube quota
+(up to ~7,200 of 10,000 units/day, worst case — ~72%) is the tightest budget by
+far, and has little headroom left: any further increase to discovery cadence,
+page depth, source count, or `DISCOVERY_QUOTA_TARGET` should be checked against
+`GET /status` first.
 
 ## Operational checks
 

@@ -404,6 +404,6 @@ describe("runRefresh", () => {
 describe("jobForCron", () => {
   it("routes the nightly schedule to refresh and everything else to discovery", () => {
     expect(jobForCron("45 3 * * *")).toBe("refresh");
-    expect(jobForCron("0 * * * *")).toBe("discovery");
+    expect(jobForCron("*/20 * * * *")).toBe("discovery");
   });
 });

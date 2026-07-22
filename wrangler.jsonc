@@ -17,11 +17,12 @@
 	],
 	"triggers": {
 		// Two schedules, distinguished by controller.cron in src/index.ts:
-		//  - discovery runs hourly, crawling rotating sources until it spends
-		//    DISCOVERY_QUOTA_TARGET or hits the per-invocation source cap
+		//  - discovery runs every 20 minutes, crawling rotating sources until
+		//    it spends DISCOVERY_QUOTA_TARGET or hits the per-invocation
+		//    source cap
 		//  - refresh runs nightly and re-checks a batch of the stalest videos
 		"crons": [
-			"0 * * * *",
+			"*/20 * * * *",
 			"45 3 * * *"
 		]
 	},
