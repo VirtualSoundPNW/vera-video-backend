@@ -116,9 +116,10 @@ weights blind.
 - **Never commit secrets.** `YOUTUBE_API_KEY` and `STATUS_PAGE_KEY` live in
   `.dev.vars` (gitignored) locally and `wrangler secret put` in production.
   `.dev.vars.example` is the only one that gets committed.
-- **Watch the quota.** Default is 10,000 units/day; the current schedule spends
-  ~400. Any change that raises `search.list` frequency or page depth needs to be
-  checked against that budget.
+- **Watch the quota.** Default is 10,000 units/day; the current schedule (hourly
+  discovery, 9 rotating sources) spends ~1,100. Any change that raises
+  `search.list` frequency, page depth, or source count needs to be checked
+  against that budget.
 - **YouTube ToS**: this service only reads metadata via the official API. Video
   playback is the app's problem and must stay in the embedded IFrame player — do
   not add stream extraction or downloading here.
