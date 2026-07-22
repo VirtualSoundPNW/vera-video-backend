@@ -1,4 +1,4 @@
-{
+﻿{
 	"$schema": "./node_modules/wrangler/config-schema.json",
 	"name": "vera-video-backend",
 	"main": "src/index.ts",
@@ -17,7 +17,8 @@
 	],
 	"triggers": {
 		// Two schedules, distinguished by controller.cron in src/index.ts:
-		//  - discovery runs hourly and crawls ONE rotating source per run
+		//  - discovery runs hourly, crawling rotating sources until it spends
+		//    DISCOVERY_QUOTA_TARGET or hits the per-invocation source cap
 		//  - refresh runs nightly and re-checks a batch of the stalest videos
 		"crons": [
 			"0 * * * *",
@@ -30,7 +31,10 @@
 		// Max results requested per discovery page (YouTube caps at 50).
 		"DISCOVERY_PAGE_SIZE": "50",
 		// Keep score threshold for the relevance filter. See src/filter.ts.
-		"RELEVANCE_THRESHOLD": "3"
+		"RELEVANCE_THRESHOLD": "3",
+		// Discovery keeps crawling sources within one run until spent quota
+		// reaches this (or the MAX_SOURCES_PER_RUN safety cap in crawler.ts).
+		"DISCOVERY_QUOTA_TARGET": "100"
 	}
 	// Secret (set with `wrangler secret put YOUTUBE_API_KEY`, never committed):
 	//   YOUTUBE_API_KEY - YouTube Data API v3 key, restricted to this Worker.

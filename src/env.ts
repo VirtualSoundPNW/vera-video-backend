@@ -10,6 +10,7 @@ export function config(env: Env) {
     refreshBatchSize: clamp(int(env.REFRESH_BATCH_SIZE, 50), 1, 50),
     discoveryPageSize: clamp(int(env.DISCOVERY_PAGE_SIZE, 50), 1, 50),
     relevanceThreshold: int(env.RELEVANCE_THRESHOLD, 3),
+    discoveryQuotaTarget: clamp(int(env.DISCOVERY_QUOTA_TARGET, 100), 1, 10_000),
   };
 }
 

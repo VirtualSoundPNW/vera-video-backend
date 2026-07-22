@@ -26,7 +26,7 @@ ships code and schema migrations.
    read-only YouTube metadata against a 10,000 unit/day quota.
 
 5. Note the default quota: **10,000 units/day**. The current schedule spends
-   ~1,100. You do not need a quota increase.
+   up to ~2,400 in the worst case, usually less. You do not need a quota increase.
 
 ### 1.2 Create the D1 database
 
@@ -297,8 +297,9 @@ main reason to keep migrations additive.
 
 Free tier covers this comfortably: Workers 100k requests/day, D1 5 GB storage
 and 5M row reads/day. The catalog is hundreds of rows and a few hundred requests
-a day. The YouTube quota (~1,100 of 10,000 units/day) is the tightest budget,
-and only if the discovery cadence, page depth, or source count increases further.
+a day. The YouTube quota (up to ~2,400 of 10,000 units/day, worst case) is the
+tightest budget, and only if the discovery cadence, page depth, source count,
+or `DISCOVERY_QUOTA_TARGET` increases further.
 
 ## Operational checks
 

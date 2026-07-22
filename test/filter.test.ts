@@ -53,6 +53,51 @@ describe("scoreCandidate — keeps genuine Vera Project material", () => {
   });
 });
 
+describe("scoreCandidate — keeps genuine Black Lodge material", () => {
+  it("keeps an exact name match", () => {
+    const decision = evaluate(candidate({ title: "Chastity Belt at Black Lodge" }), neutral);
+    expect(decision.keep).toBe(true);
+  });
+
+  it("keeps venue name plus Seattle context", () => {
+    const decision = evaluate(
+      candidate({ title: "full set", description: "Live at Black Lodge, Eastlake, Seattle" }),
+      neutral
+    );
+    expect(decision.keep).toBe(true);
+  });
+
+  it("reads signal from tags, not just the title", () => {
+    const decision = evaluate(candidate({ title: "full set 2026", tags: ["black lodge", "seattle"] }), neutral);
+    expect(decision.keep).toBe(true);
+  });
+
+  it("keeps a bare name match, same as a bare 'Vera Project' mention today", () => {
+    const decision = evaluate(candidate({ title: "Black Lodge" }), neutral);
+    expect(decision.keep).toBe(true);
+  });
+});
+
+describe("scoreCandidate — rejects the other Black Lodge", () => {
+  const rejects: Array<[string, Partial<Candidate>]> = [
+    ["Twin Peaks itself", { title: "Twin Peaks: the Black Lodge explained" }],
+    ["the Red Room", { title: "Every Red Room scene in Twin Peaks, ranked" }],
+    ["Laura Palmer discussion", { title: "Laura Palmer and the Black Lodge theory" }],
+  ];
+
+  it.each(rejects)("rejects %s", (_label, fields) => {
+    expect(evaluate(candidate(fields), neutral).keep).toBe(false);
+  });
+
+  it("lets a decisive disambiguation outweigh a bare name match", () => {
+    const decision = evaluate(
+      candidate({ title: "Black Lodge", description: "A Twin Peaks retrospective" }),
+      neutral
+    );
+    expect(decision.keep).toBe(false);
+  });
+});
+
 describe("scoreCandidate — rejects the other Veras", () => {
   const rejects: Array<[string, Partial<Candidate>]> = [
     ["Vera Rubin Observatory", { title: "Vera Rubin Observatory first light images" }],
