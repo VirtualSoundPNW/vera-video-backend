@@ -57,20 +57,22 @@ Each response includes a `cursor` — pass it as `since` on the next sync.
 
 Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 
-- **Discovery** (`0 */6 * * *`) — crawls **one** source per run, picking the
-  least-recently-crawled one. Search sources cost 100 quota units per page;
-  results are then hydrated with a `videos.list` call (1 unit) because search
-  snippets carry no tags, truncated descriptions and no duration — one extra
-  unit buys much better filtering input. ~101 units/run.
+- **Discovery** (`0 * * * *`, hourly) — crawls **one** source per run, picking
+  the least-recently-crawled one. Search sources cost 100 quota units per
+  page; results are then hydrated with a `videos.list` call (1 unit) because
+  search snippets carry no tags, truncated descriptions and no duration — one
+  extra unit buys much better filtering input. Channel sources cost 1 unit/page
+  via `playlistItems.list` instead. ~101 units/run for a search source, ~2 for
+  a channel one.
 - **Refresh** (`45 3 * * *`) — re-checks the 50 stalest videos in one
   `videos.list` call (1 unit): updates metadata, marks vanished videos
   `removed`, and re-applies the filter so rule changes reach existing rows.
 
 Each run is deliberately bounded to one source or one batch. That keeps every
-invocation inside the free-tier envelope (10 ms CPU, 50 subrequests) and spreads
-quota across the day. Adding sources slows each source's cadence rather than
-increasing daily cost. At four discovery runs a day the total is ~400 of the
-10,000 daily units.
+invocation inside the free-tier envelope (10 ms CPU, 50 subrequests). With 9
+rotating sources (4 search, 5 channel uploads) and hourly discovery, the total
+is ~1,100 of the 10,000 daily units — there's room to add more of either kind
+before the cadence or source count needs to trade off against quota.
 
 ### Relevance filtering
 

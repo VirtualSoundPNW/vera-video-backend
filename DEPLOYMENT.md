@@ -26,7 +26,7 @@ ships code and schema migrations.
    read-only YouTube metadata against a 10,000 unit/day quota.
 
 5. Note the default quota: **10,000 units/day**. The current schedule spends
-   ~400. You do not need a quota increase.
+   ~1,100. You do not need a quota increase.
 
 ### 1.2 Create the D1 database
 
@@ -97,7 +97,7 @@ The human-readable dashboard is `https://vera-video-backend.<subdomain>.workers.
 errors, and endpoint traffic. Worth bookmarking (with the key baked into the
 URL) since there's no other way in without it.
 
-### 1.7 Force the first crawl (don't wait 6 hours)
+### 1.7 Force the first crawl (don't wait an hour)
 
 Cloudflare has no "run cron now" button, and the `/cdn-cgi/handler/scheduled`
 trigger endpoint only exists in `wrangler dev`. The trick is to run dev against
@@ -297,8 +297,8 @@ main reason to keep migrations additive.
 
 Free tier covers this comfortably: Workers 100k requests/day, D1 5 GB storage
 and 5M row reads/day. The catalog is hundreds of rows and a few hundred requests
-a day. The YouTube quota (~400 of 10,000 units/day) is the tightest budget, and
-only if the discovery cadence or page depth increases.
+a day. The YouTube quota (~1,100 of 10,000 units/day) is the tightest budget,
+and only if the discovery cadence, page depth, or source count increases further.
 
 ## Operational checks
 
