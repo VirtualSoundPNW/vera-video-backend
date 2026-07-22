@@ -115,7 +115,7 @@ export default {
   // re-run: discovery upserts by video_id, refresh only rewrites metadata.
   //
   // Test locally against `wrangler dev` with:
-  //   curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/6+*+*+*"
+  //   curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/20+*+*+*+*"
   //   curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const job = jobForCron(controller.cron);

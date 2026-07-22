@@ -31,7 +31,7 @@ Trigger the cron jobs by hand against `wrangler dev` — note the path is
 Cloudflare skill still show; it falls through to the Hono router and 404s):
 
 ```bash
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*/6+*+*+*"   # discovery
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/20+*+*+*+*"  # discovery
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"    # refresh
 curl "http://localhost:8787/stats"                                        # inspect result
 ```
@@ -131,14 +131,15 @@ for both venues; keep adding cases there rather than tweaking weights blind.
   `.dev.vars` (gitignored) locally and `wrangler secret put` in production.
   `.dev.vars.example` is the only one that gets committed.
 - **Watch the quota.** Default is 10,000 units/day. With `DISCOVERY_QUOTA_TARGET`
-  batching multiple sources into busier hours, actual daily spend depends on
-  the mix of sources hit each run — up to ~2,400 in the theoretical worst case
-  (every one of the 24 hourly runs reaching the full 100-unit target), likely
-  less in practice since a cheap-source-heavy run hits `MAX_SOURCES_PER_RUN`
-  before it can reach the target. Check `GET /status` for the real number.
-  Any change that raises `search.list` frequency, page depth, source count, or
-  `DISCOVERY_QUOTA_TARGET` needs to be checked
-  against that budget.
+  batching multiple sources into busier runs, actual daily spend depends on
+  the mix of sources hit each run — up to ~7,200 in the theoretical worst case
+  (every one of the 72 twenty-minute runs reaching the full 100-unit target),
+  likely less in practice since a cheap-source-heavy run hits
+  `MAX_SOURCES_PER_RUN` before it can reach the target. Check `GET /status`
+  for the real number. Any change that raises `search.list` frequency, page
+  depth, source count, `DISCOVERY_QUOTA_TARGET`, or the cron cadence needs to
+  be checked against that budget — there's not much headroom left above
+  ~7,200/day without risking the 10,000 cap on a bad day.
 - **YouTube ToS**: this service only reads metadata via the official API. Video
   playback is the app's problem and must stay in the embedded IFrame player — do
   not add stream extraction or downloading here.
