@@ -52,11 +52,17 @@ curl "http://localhost:8787/stats"                                        # insp
 
 ## Design decisions worth knowing before changing things
 
-- **Each cron run is deliberately bounded** to one source (discovery) or one
-  50-video batch (refresh). That keeps every invocation inside the Workers free
-  tier — **10 ms CPU, 50 subrequests** — and spreads quota across the day.
-  Adding sources slows each source's cadence rather than raising daily cost.
-  Don't "optimize" this into crawling everything in one run.
+- **Each cron run is deliberately bounded**, just not to a single source
+  anymore. Discovery loops sources (repeating the same one if it's the only
+  one enabled, to page deeper into a backlog) until it spends
+  `DISCOVERY_QUOTA_TARGET` — cheap `channel_uploads` sources (2 units) would
+  otherwise leave most of an hour's budget unused. `MAX_SOURCES_PER_RUN` in
+  `crawler.ts` (currently 4) is the real safety bound: it protects the
+  Workers free tier's **10 ms CPU, 50 subrequests/invocation** ceiling
+  independent of the quota target, since one source with results costs ~10
+  subrequests. Refresh stays bounded to one 50-video batch. Raising
+  `MAX_SOURCES_PER_RUN` needs the subrequest math re-checked, not just a
+  bigger number.
 - **Quota is billed per request, not per success.** `crawler.ts` adds
   `QUOTA_COST.*` *before* awaiting, so a failed call still shows up in
   `crawl_log`. Moving that after the await understates real burn.
@@ -71,6 +77,11 @@ curl "http://localhost:8787/stats"                                        # insp
   always moves and is deliberately excluded from that comparison.
 - **Videos are never hard-deleted**; a vanished video becomes `status='removed'`
   so clients can prune. `rejected` rows are kept too, for filter tuning.
+- **`refresh` only re-scores `status='active'` rows** (`stalestVideoIds`
+  filters on it). A filter change that should *rescue* previously-rejected
+  videos won't reach them on its own — check for stuck `rejected` rows
+  matching the new rule and flip them by hand (or via `overrides`) after any
+  change that loosens the filter.
 - **A broken source must not wedge the rotation** — discovery advances
   `last_crawled_at` even on failure, but preserves `page_token` so no page is
   skipped.
@@ -85,13 +96,16 @@ curl "http://localhost:8787/stats"                                        # insp
 
 ### The filter is the part that needs tuning
 
-"Vera" is heavily overloaded (Vera Rubin Observatory, Vera Wang, aloe vera, the
-ITV series, and a radio-astronomy program *also* called "the VERA project").
-`src/filter.ts` scores candidates; precedence is **override → channel policy →
-keyword score**. The weights are a starting point, not truth — `crawl_log` and
-`GET /stats` exist to tune them against real results. `test/filter.test.ts`
-pins the specific disambiguations; keep adding cases there rather than tweaking
-weights blind.
+The Vera Project operates two venues, both accepted by the filter: the venue
+itself, and **Black Lodge** (Eastlake Ave, Seattle — reopened by Vera in 2021).
+Both names are overloaded. "Vera" collides with Vera Rubin Observatory, Vera
+Wang, aloe vera, the ITV series, and a radio-astronomy program *also* called
+"the VERA project". "Black Lodge" collides with Twin Peaks, where it's the
+dominant sense of the phrase on YouTube. `src/filter.ts` scores candidates;
+precedence is **override → channel policy → keyword score**. The weights are
+a starting point, not truth — `crawl_log` and `GET /stats` exist to tune them
+against real results. `test/filter.test.ts` pins the specific disambiguations
+for both venues; keep adding cases there rather than tweaking weights blind.
 
 ## Toolchain gotchas
 
@@ -116,9 +130,14 @@ weights blind.
 - **Never commit secrets.** `YOUTUBE_API_KEY` and `STATUS_PAGE_KEY` live in
   `.dev.vars` (gitignored) locally and `wrangler secret put` in production.
   `.dev.vars.example` is the only one that gets committed.
-- **Watch the quota.** Default is 10,000 units/day; the current schedule (hourly
-  discovery, 9 rotating sources) spends ~1,100. Any change that raises
-  `search.list` frequency, page depth, or source count needs to be checked
+- **Watch the quota.** Default is 10,000 units/day. With `DISCOVERY_QUOTA_TARGET`
+  batching multiple sources into busier hours, actual daily spend depends on
+  the mix of sources hit each run — up to ~2,400 in the theoretical worst case
+  (every one of the 24 hourly runs reaching the full 100-unit target), likely
+  less in practice since a cheap-source-heavy run hits `MAX_SOURCES_PER_RUN`
+  before it can reach the target. Check `GET /status` for the real number.
+  Any change that raises `search.list` frequency, page depth, source count, or
+  `DISCOVERY_QUOTA_TARGET` needs to be checked
   against that budget.
 - **YouTube ToS**: this service only reads metadata via the official API. Video
   playback is the app's problem and must stay in the embedded IFrame player — do

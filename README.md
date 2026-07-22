@@ -57,35 +57,45 @@ Each response includes a `cursor` — pass it as `since` on the next sync.
 
 Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 
-- **Discovery** (`0 * * * *`, hourly) — crawls **one** source per run, picking
-  the least-recently-crawled one. Search sources cost 100 quota units per
-  page; results are then hydrated with a `videos.list` call (1 unit) because
-  search snippets carry no tags, truncated descriptions and no duration — one
-  extra unit buys much better filtering input. Channel sources cost 1 unit/page
-  via `playlistItems.list` instead. ~101 units/run for a search source, ~2 for
-  a channel one.
+- **Discovery** (`0 * * * *`, hourly) — crawls the least-recently-crawled
+  source, then keeps going (repeating the same source if it's the only one
+  enabled, to page deeper into its backlog) until it spends
+  `DISCOVERY_QUOTA_TARGET` (default 100 units) or hits the
+  `MAX_SOURCES_PER_RUN` safety cap (4), whichever comes first. Search sources
+  cost 100 quota units per page; results are then hydrated with a
+  `videos.list` call (1 unit) because search snippets carry no tags,
+  truncated descriptions and no duration — one extra unit buys much better
+  filtering input. Channel sources cost 1 unit/page via `playlistItems.list`
+  instead. ~101 units for a search source, ~2 for a channel one — so a single
+  cheap channel source no longer leaves most of the hour's budget unspent.
 - **Refresh** (`45 3 * * *`) — re-checks the 50 stalest videos in one
   `videos.list` call (1 unit): updates metadata, marks vanished videos
   `removed`, and re-applies the filter so rule changes reach existing rows.
 
-Each run is deliberately bounded to one source or one batch. That keeps every
-invocation inside the free-tier envelope (10 ms CPU, 50 subrequests). With 9
-rotating sources (4 search, 5 channel uploads) and hourly discovery, the total
-is ~1,100 of the 10,000 daily units — there's room to add more of either kind
-before the cadence or source count needs to trade off against quota.
+`MAX_SOURCES_PER_RUN` is what actually keeps each invocation inside the
+free-tier envelope (10 ms CPU, 50 subrequests) — one source with results costs
+~10 subrequests. With 10 rotating sources (5 search, 5 channel uploads) and
+hourly discovery, daily spend is up to ~2,400 of the 10,000 units in the
+worst case (every run reaching the 100-unit target) and usually less — check
+`GET /status` for the real figure. There's room to add more sources, or raise
+`DISCOVERY_QUOTA_TARGET`, before the cadence or source count needs to trade
+off against quota.
 
 ### Relevance filtering
 
-"Vera" is noisy — the Vera Rubin Observatory, Vera Wang, aloe vera, the ITV
-series, and a radio-astronomy program also called "the VERA project" all compete
-with the venue. `src/filter.ts` scores candidates and keeps those at or above
-`RELEVANCE_THRESHOLD`. Precedence:
+The Vera Project operates two venues, both accepted here: the venue itself,
+and **Black Lodge** (Eastlake Ave, Seattle). Both names are noisy — "Vera"
+competes with the Vera Rubin Observatory, Vera Wang, aloe vera, the ITV
+series, and a radio-astronomy program also called "the VERA project"; "Black
+Lodge" competes with Twin Peaks, its dominant sense on YouTube. `src/filter.ts`
+scores candidates and keeps those at or above `RELEVANCE_THRESHOLD`. Precedence:
 
 1. **manual override** (`overrides` table) — always wins
 2. **channel policy** (`channels.policy` = `allow` / `block`)
-3. **keyword score** — the venue's name scores positive, supporting context
-   (Seattle, all-ages, live at Vera) adds a capped bonus, and decisive
-   disambiguations (`vera rubin`, `aloe vera`, `vlbi`, …) subtract.
+3. **keyword score** — either venue's name scores positive, supporting context
+   (Seattle, all-ages, live at Vera, Eastlake) adds a capped bonus, and
+   decisive disambiguations (`vera rubin`, `aloe vera`, `vlbi`, `twin peaks`, …)
+   subtract.
 
 These weights are a starting point, not truth. `GET /stats` and the `crawl_log`
 table exist to tune them against real results.

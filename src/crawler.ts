@@ -20,7 +20,15 @@ import {
   type Page,
   type VideoDetails,
 } from "./youtube";
-import type { CrawlKind, VideoStatus } from "./types";
+import type { CrawlKind, SourceRow, VideoStatus } from "./types";
+
+/**
+ * Hard ceiling on sources processed per discovery invocation, independent of
+ * DISCOVERY_QUOTA_TARGET. Protects the Workers free-tier subrequest budget
+ * (50/invocation): one source with results costs ~10 subrequests (2 YouTube
+ * calls + ~8 D1 calls for scoring/storage), so 4 sources (~40) leaves margin.
+ */
+const MAX_SOURCES_PER_RUN = 4;
 
 /** Score a hydrated batch and write it, returning counts for the crawl log. */
 async function scoreAndStore(
@@ -71,22 +79,14 @@ async function scoreAndStore(
 }
 
 /**
- * Crawl one page of the least-recently-crawled source.
+ * Crawl one page of a single source, start to finish (its own crawl_log row).
  *
  * search.list costs 100 units and returns only ids, so we always hydrate via
  * videos.list (1 unit) — for one extra unit we get full descriptions, tags and
  * durations, which the relevance filter needs and search snippets don't carry.
  */
-export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
+async function crawlOneSource(env: Env, source: SourceRow, discoveryPageSize: number): Promise<db.CrawlResult> {
   const at = new Date().toISOString();
-  const { discoveryPageSize } = config(env);
-
-  const source = await db.pickSource(env.DB);
-  if (!source) {
-    console.warn("discovery: no enabled sources");
-    return { apiUnits: 0, fetched: 0, kept: 0, rejected: 0, added: 0 };
-  }
-
   const crawlId = await db.startCrawl(env.DB, "discovery", source.id, at);
   const result: db.CrawlResult = { apiUnits: 0, fetched: 0, kept: 0, rejected: 0, added: 0 };
 
@@ -126,6 +126,39 @@ export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
 
   await db.finishCrawl(env.DB, crawlId, result, new Date().toISOString());
   return result;
+}
+
+/**
+ * Keep crawling least-recently-crawled sources — the same one repeatedly if
+ * it's the only one enabled, paging deeper into its backlog — until spent
+ * quota reaches DISCOVERY_QUOTA_TARGET or MAX_SOURCES_PER_RUN sources have
+ * been processed, whichever comes first. A cheap channel_uploads source (2
+ * units) would otherwise leave most of the quota budget unspent every hour.
+ */
+export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
+  const { discoveryPageSize, discoveryQuotaTarget } = config(env);
+
+  const total: db.CrawlResult = { apiUnits: 0, fetched: 0, kept: 0, rejected: 0, added: 0 };
+  let sourcesProcessed = 0;
+
+  while (total.apiUnits < discoveryQuotaTarget && sourcesProcessed < MAX_SOURCES_PER_RUN) {
+    const source = await db.pickSource(env.DB);
+    if (!source) {
+      if (sourcesProcessed === 0) console.warn("discovery: no enabled sources");
+      break;
+    }
+
+    const result = await crawlOneSource(env, source, discoveryPageSize);
+    total.apiUnits += result.apiUnits;
+    total.fetched += result.fetched;
+    total.kept += result.kept;
+    total.rejected += result.rejected;
+    total.added += result.added;
+    if (result.error && !total.error) total.error = result.error;
+    sourcesProcessed++;
+  }
+
+  return total;
 }
 
 /**

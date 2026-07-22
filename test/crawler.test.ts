@@ -221,7 +221,9 @@ describe("runDiscovery", () => {
     ).run();
     stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
 
-    const result = await runDiscovery(env);
+    // A channel source alone costs 2 units, well under the default 100-unit
+    // target, so a low target isolates this to exactly one source-pass.
+    const result = await runDiscovery({ ...env, DISCOVERY_QUOTA_TARGET: "1" } as unknown as Env);
 
     expect(calls[0]).toBe("/youtube/v3/playlistItems");
     expect(result.apiUnits).toBe(2); // 1 for the playlist page + 1 for hydration
@@ -232,6 +234,43 @@ describe("runDiscovery", () => {
     const result = await runDiscovery(env);
     expect(result).toMatchObject({ apiUnits: 0, fetched: 0 });
     expect(calls).toEqual([]);
+  });
+});
+
+describe("runDiscovery — spends up to the quota target in one run", () => {
+  async function seedChannelSource(value: string) {
+    await env.DB.prepare("INSERT INTO sources (kind, value, label) VALUES ('channel_uploads', ?, 'test')")
+      .bind(value)
+      .run();
+  }
+
+  it("keeps crawling additional sources until the target is reached", async () => {
+    await seedChannelSource("UCaaaaaaaaaaaaaaaaaaaaaa");
+    await seedChannelSource("UCbbbbbbbbbbbbbbbbbbbbbb");
+    await seedChannelSource("UCcccccccccccccccccccccc");
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    // 2 units/source (channel_uploads): 2, 4, 6 — needs all 3 to clear a
+    // target of 5, since each source alone leaves it unmet.
+    const result = await runDiscovery({ ...env, DISCOVERY_QUOTA_TARGET: "5" } as unknown as Env);
+
+    expect(result.apiUnits).toBe(6);
+    const log = await env.DB.prepare("SELECT COUNT(*) AS n FROM crawl_log").first<{ n: number }>();
+    expect(log!.n).toBe(3); // one crawl_log row per source, not one for the whole run
+  });
+
+  it("stops at the per-invocation source cap even if the target isn't met", async () => {
+    await seedChannelSource("UCaaaaaaaaaaaaaaaaaaaaaa");
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    // A single cheap source, revisited repeatedly, would burn quota forever
+    // trying to reach the (much higher) default target — the safety cap
+    // must cut it off well before that.
+    const result = await runDiscovery(env);
+
+    expect(result.apiUnits).toBe(8); // 4 sources (the cap) x 2 units
+    const log = await env.DB.prepare("SELECT COUNT(*) AS n FROM crawl_log").first<{ n: number }>();
+    expect(log!.n).toBe(4);
   });
 });
 
