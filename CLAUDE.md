@@ -88,6 +88,10 @@ curl "http://localhost:8787/stats"                                        # insp
 - **The Vera Project's channel ID is deliberately not hardcoded.** Inventing a
   plausible `UC...` would silently crawl the wrong channel. The crawler records
   every channel it meets as `neutral` for an operator to promote (see README).
+  Promotions and other `sources`/`channels` tuning belong in a new migration
+  file, not a raw `wrangler d1 execute` write — see
+  `migrations/0003_promote_high_yield_channels.sql` for the pattern. That
+  keeps operator tuning under git, not just live in D1.
 - **`GET /status` is gated by `?key=` against `STATUS_PAGE_KEY`, not public.**
   A wrong/missing key 404s rather than 401/403, so a scanner can't tell the
   route exists. Because the secret rides in the URL, the response always sets
