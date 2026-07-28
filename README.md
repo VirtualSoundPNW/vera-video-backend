@@ -104,18 +104,26 @@ These weights are a starting point, not truth. `GET /stats` and the `crawl_log`
 table exist to tune them against real results.
 
 The crawler records every channel it meets into `channels` as `neutral`, so you
-can review and promote them without hunting for channel IDs:
+can review and promote them without hunting for channel IDs. Read-only lookups
+are fine as an ad hoc query:
 
 ```bash
 wrangler d1 execute vera-video --remote --command \
   "SELECT channel_id, title FROM channels ORDER BY title"
+```
 
-wrangler d1 execute vera-video --remote --command \
-  "UPDATE channels SET policy='allow' WHERE channel_id='UC…'"
+But the actual promotion — anything that changes `channels` or `sources` — should
+go in a new migration file instead of a raw `d1 execute` write, so the change has
+a git trail and `npm run db:migrate:remote` can reproduce it if the database is
+ever rebuilt. See `migrations/0003_promote_high_yield_channels.sql` for the
+pattern (`INSERT OR IGNORE` for sources, so it's safe to re-run):
 
-# Then crawl its uploads at 1 unit/page instead of 100:
-wrangler d1 execute vera-video --remote --command \
-  "INSERT INTO sources (kind, value, label) VALUES ('channel_uploads','UC…','Vera uploads')"
+```sql
+UPDATE channels SET policy = 'allow' WHERE channel_id = 'UC…';
+
+-- Then crawl its uploads at 1 unit/page instead of 100:
+INSERT OR IGNORE INTO sources (kind, value, label)
+  VALUES ('channel_uploads', 'UC…', 'Vera uploads');
 ```
 
 ## Setup
