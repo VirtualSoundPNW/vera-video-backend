@@ -274,6 +274,87 @@ describe("runDiscovery — spends up to the quota target in one run", () => {
   });
 });
 
+describe("runDiscovery — search cadence", () => {
+  async function seedChannelSource(value: string, lastCrawledAt: string | null = null) {
+    await env.DB.prepare("INSERT INTO sources (kind, value, label, last_crawled_at) VALUES ('channel_uploads', ?, 'test', ?)")
+      .bind(value, lastCrawledAt)
+      .run();
+  }
+
+  it("gives a due search source the run even when a channel source is staler", async () => {
+    await seedChannelSource("UCaaaaaaaaaaaaaaaaaaaaaa", "2020-01-01T00:00:00Z");
+    const source = await seedSearchSource();
+    await env.DB.prepare("UPDATE sources SET last_crawled_at = '2021-01-01T00:00:00Z' WHERE id = ?").bind(source!.id).run();
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    await runDiscovery(env);
+
+    expect(calls[0]).toBe("/youtube/v3/search");
+  });
+
+  it("skips search inside SEARCH_INTERVAL_MINUTES and spends the run on channels", async () => {
+    const source = await seedSearchSource();
+    await env.DB.prepare("UPDATE sources SET last_crawled_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), source!.id)
+      .run();
+    await seedChannelSource("UCaaaaaaaaaaaaaaaaaaaaaa");
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    await runDiscovery(env);
+
+    expect(calls).not.toContain("/youtube/v3/search");
+    expect(calls[0]).toBe("/youtube/v3/playlistItems");
+  });
+
+  it("still searches ahead of cadence when there are no channel sources, rather than sitting idle", async () => {
+    const source = await seedSearchSource();
+    await env.DB.prepare("UPDATE sources SET last_crawled_at = ? WHERE id = ?")
+      .bind(new Date().toISOString(), source!.id)
+      .run();
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    await runDiscovery(env);
+
+    expect(calls[0]).toBe("/youtube/v3/search");
+  });
+});
+
+describe("runDiscovery — auto-promotion", () => {
+  it("promotes a channel to a channel_uploads source once enough of its videos are accepted", async () => {
+    await seedSearchSource();
+    stubYouTube({
+      searchIds: ["v1", "v2"],
+      videos: [
+        { id: "v1", title: "Band live at The Vera Project", channelId: "UCprolific", channelTitle: "Prolific" },
+        { id: "v2", title: "Encore at The Vera Project", channelId: "UCprolific", channelTitle: "Prolific" },
+      ],
+    });
+
+    await runDiscovery(env);
+
+    const row = await env.DB.prepare("SELECT kind, label, enabled, last_crawled_at FROM sources WHERE value = 'UCprolific'").first<any>();
+    expect(row).toMatchObject({ kind: "channel_uploads", label: "Prolific uploads (auto)", enabled: 1 });
+    // Never crawled, so it goes to the head of the channel rotation.
+    expect(row.last_crawled_at).toBeNull();
+  });
+
+  it("does not promote a channel still below AUTO_PROMOTE_MIN_ACTIVE", async () => {
+    await seedSearchSource();
+    stubYouTube({
+      searchIds: ["v1", "v2"],
+      videos: [
+        { id: "v1", title: "Band live at The Vera Project", channelId: "UConehit", channelTitle: "One Hit" },
+        { id: "v2", title: "Vera Rubin Observatory tour", channelId: "UConehit", channelTitle: "One Hit" },
+      ],
+    });
+
+    await runDiscovery(env);
+
+    const row = await env.DB.prepare("SELECT id FROM sources WHERE value = 'UConehit'").first();
+    expect(row).toBeNull();
+  });
+});
+
 describe("runDiscovery — failure handling", () => {
   it("logs the error instead of throwing", async () => {
     await seedSearchSource();

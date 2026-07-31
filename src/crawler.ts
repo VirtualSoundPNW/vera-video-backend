@@ -1,11 +1,12 @@
 /**
  * The two scheduled jobs.
  *
- * Both are deliberately bounded: one source (or one 50-video batch) per run.
- * That keeps each invocation inside the Workers free-tier envelope (10ms CPU,
- * 50 subrequests) and spreads YouTube quota across the day instead of spending
- * it in one burst. Sources rotate least-recently-crawled first, so adding a
- * source slows every source's cadence rather than raising total cost.
+ * Both are deliberately bounded: a few sources (or one 50-video batch) per
+ * run. That keeps each invocation inside the Workers free-tier envelope (10ms
+ * CPU, 50 subrequests) and spreads YouTube quota across the day instead of
+ * spending it in one burst. Search sources run on a fixed cadence; channel
+ * sources rotate least-recently-crawled first, so adding channels slows the
+ * channel pool's cadence rather than raising total cost (see runDiscovery).
  */
 
 import * as db from "./db";
@@ -129,20 +130,43 @@ async function crawlOneSource(env: Env, source: SourceRow, discoveryPageSize: nu
 }
 
 /**
- * Keep crawling least-recently-crawled sources — the same one repeatedly if
- * it's the only one enabled, paging deeper into its backlog — until spent
- * quota reaches DISCOVERY_QUOTA_TARGET or MAX_SOURCES_PER_RUN sources have
- * been processed, whichever comes first. A cheap channel_uploads source (2
- * units) would otherwise leave most of the quota budget unspent every hour.
+ * Keep crawling sources until spent quota reaches DISCOVERY_QUOTA_TARGET or
+ * MAX_SOURCES_PER_RUN sources have been processed, whichever comes first.
+ *
+ * The two source kinds are budgeted separately. Search sources run on a fixed
+ * per-source cadence (SEARCH_INTERVAL_MINUTES) and get first claim on a run
+ * when due; the rest of the run is filled with least-recently-crawled
+ * channel_uploads sources. In a single shared rotation, a growing pool of
+ * cheap channel sources would crowd the expensive searches — the only thing
+ * that discovers *new* channels — down to almost never running.
+ *
+ * After each search crawl, channels that have accumulated enough accepted
+ * videos are auto-promoted into cheap channel_uploads sources, so a channel
+ * found via search gets its whole backlog mined at 1 unit/page instead of
+ * waiting to resurface in more 100-unit searches. Exhausted ("dry") channels
+ * stay in the rotation: their page token resets to page 1 (see
+ * crawlOneSource), so each later visit is a ~2-unit check for new uploads.
  */
 export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
-  const { discoveryPageSize, discoveryQuotaTarget } = config(env);
+  const { discoveryPageSize, discoveryQuotaTarget, searchIntervalMinutes, autoPromoteMinActive } = config(env);
 
   const total: db.CrawlResult = { apiUnits: 0, fetched: 0, kept: 0, rejected: 0, added: 0 };
   let sourcesProcessed = 0;
+  let searchTurnTaken = false;
 
   while (total.apiUnits < discoveryQuotaTarget && sourcesProcessed < MAX_SOURCES_PER_RUN) {
-    const source = await db.pickSource(env.DB);
+    let source: SourceRow | null = null;
+
+    if (!searchTurnTaken) {
+      searchTurnTaken = true;
+      const cutoff = new Date(Date.now() - searchIntervalMinutes * 60_000).toISOString();
+      source = await db.pickDueSearchSource(env.DB, cutoff);
+    }
+    // Fill the rest of the run with channel sources. The unfiltered fallback
+    // only matters when no channel sources exist yet (a fresh install seeded
+    // with searches only): better to search ahead of cadence than sit idle.
+    source ??= await db.pickSource(env.DB, "channel_uploads");
+    source ??= await db.pickSource(env.DB);
     if (!source) {
       if (sourcesProcessed === 0) console.warn("discovery: no enabled sources");
       break;
@@ -156,6 +180,14 @@ export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
     total.added += result.added;
     if (result.error && !total.error) total.error = result.error;
     sourcesProcessed++;
+
+    // Only search results can surface a channel we aren't already mining, so
+    // this only needs to run after search crawls. Newly added sources have a
+    // NULL last_crawled_at and jump to the head of the channel rotation.
+    if (source.kind === "search") {
+      const promoted = await db.autoPromoteChannels(env.DB, autoPromoteMinActive);
+      if (promoted > 0) console.log(`discovery: auto-promoted ${promoted} channel(s) to channel_uploads sources`);
+    }
   }
 
   return total;

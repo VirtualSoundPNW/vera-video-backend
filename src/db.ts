@@ -3,7 +3,16 @@
  * never interpolate values into SQL.
  */
 
-import type { CatalogVideo, ChannelPolicy, CrawlKind, OverrideAction, SourceRow, VideoRow, VideoStatus } from "./types";
+import type {
+  CatalogVideo,
+  ChannelPolicy,
+  CrawlKind,
+  OverrideAction,
+  SourceKind,
+  SourceRow,
+  VideoRow,
+  VideoStatus,
+} from "./types";
 
 /** Safety cap on rows returned in one catalog response. */
 export const MAX_PAGE = 2000;
@@ -19,17 +28,65 @@ async function batched(db: D1Database, statements: D1PreparedStatement[]): Promi
 
 /* ------------------------------- sources -------------------------------- */
 
-/** Least-recently-crawled enabled source; NULLs (never crawled) sort first. */
-export async function pickSource(db: D1Database): Promise<SourceRow | null> {
+const SOURCE_COLUMNS = `id, kind, value, label, enabled, page_token, last_crawled_at`;
+
+/**
+ * Least-recently-crawled enabled source; NULLs (never crawled) sort first.
+ * Optionally restricted to one kind, so the crawler can budget cheap
+ * channel_uploads sources separately from expensive searches.
+ */
+export async function pickSource(db: D1Database, kind?: SourceKind): Promise<SourceRow | null> {
+  const statement = db.prepare(
+    `SELECT ${SOURCE_COLUMNS}
+       FROM sources
+      WHERE enabled = 1${kind ? " AND kind = ?" : ""}
+      ORDER BY last_crawled_at IS NOT NULL, last_crawled_at ASC
+      LIMIT 1`
+  );
+  return (kind ? statement.bind(kind) : statement).first<SourceRow>();
+}
+
+/** Stalest enabled search source not crawled since `cutoff`; null when none is due. */
+export async function pickDueSearchSource(db: D1Database, cutoff: string): Promise<SourceRow | null> {
   return db
     .prepare(
-      `SELECT id, kind, value, label, enabled, page_token, last_crawled_at
+      `SELECT ${SOURCE_COLUMNS}
          FROM sources
-        WHERE enabled = 1
+        WHERE enabled = 1 AND kind = 'search'
+          AND (last_crawled_at IS NULL OR last_crawled_at < ?)
         ORDER BY last_crawled_at IS NOT NULL, last_crawled_at ASC
         LIMIT 1`
     )
+    .bind(cutoff)
     .first<SourceRow>();
+}
+
+/**
+ * Add every channel that has earned a spot in the rotation as a cheap
+ * channel_uploads source (1 unit/page vs 100 for search): at least `minActive`
+ * filter-accepted videos, not blocked, a real UC... id (anything else can't be
+ * mapped to an uploads playlist), and not already a source. The channel's
+ * policy is left alone — usually 'neutral', so its other uploads still go
+ * through the filter. This promotes the *crawl*, not the *trust*; 'allow' is
+ * still an operator decision (see migrations/0003_promote_high_yield_channels).
+ * Returns how many sources were added.
+ */
+export async function autoPromoteChannels(db: D1Database, minActive: number): Promise<number> {
+  const result = await db
+    .prepare(
+      `INSERT OR IGNORE INTO sources (kind, value, label)
+       SELECT 'channel_uploads', c.channel_id, c.title || ' uploads (auto)'
+         FROM channels c
+         JOIN videos v ON v.channel_id = c.channel_id AND v.status = 'active'
+        WHERE c.policy != 'block'
+          AND c.channel_id LIKE 'UC%'
+          AND c.channel_id NOT IN (SELECT value FROM sources WHERE kind = 'channel_uploads')
+        GROUP BY c.channel_id, c.title
+       HAVING COUNT(*) >= ?`
+    )
+    .bind(minActive)
+    .run();
+  return result.meta.changes ?? 0;
 }
 
 export async function advanceSource(

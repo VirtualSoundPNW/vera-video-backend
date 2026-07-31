@@ -57,30 +57,43 @@ Each response includes a `cursor` — pass it as `since` on the next sync.
 
 Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 
-- **Discovery** (`*/20 * * * *`, every 20 minutes) — crawls the
-  least-recently-crawled source, then keeps going (repeating the same source
-  if it's the only one enabled, to page deeper into its backlog) until it
-  spends `DISCOVERY_QUOTA_TARGET` (default 100 units) or hits the
-  `MAX_SOURCES_PER_RUN` safety cap (4), whichever comes first. Search sources
-  cost 100 quota units per page; results are then hydrated with a
-  `videos.list` call (1 unit) because search snippets carry no tags,
+- **Discovery** (`*/20 * * * *`, every 20 minutes) — budgets the two source
+  kinds separately, then crawls until it spends `DISCOVERY_QUOTA_TARGET`
+  (default 100 units) or hits the `MAX_SOURCES_PER_RUN` safety cap (4). Each
+  **search** source runs on a fixed cadence (`SEARCH_INTERVAL_MINUTES`,
+  default 240): a run where the stalest search source is due goes to that
+  search; every other run is filled with least-recently-crawled **channel**
+  sources. Search costs 100 quota units per page; results are then hydrated
+  with a `videos.list` call (1 unit) because search snippets carry no tags,
   truncated descriptions and no duration — one extra unit buys much better
   filtering input. Channel sources cost 1 unit/page via `playlistItems.list`
-  instead. ~101 units for a search source, ~2 for a channel one — so a single
-  cheap channel source no longer leaves most of a run's budget unspent.
+  instead (~2 units per visit including hydration).
+
+  After each search crawl, any channel that has accumulated
+  `AUTO_PROMOTE_MIN_ACTIVE` (default 2) filter-accepted videos is
+  **auto-promoted** into a `channel_uploads` source, so its whole backlog
+  gets mined at 1 unit/page instead of waiting to resurface in 100-unit
+  searches. Its `channels.policy` stays `neutral` — the filter still judges
+  every upload; only manual `allow` promotion skips scoring. A channel whose
+  backlog is exhausted stays in the rotation: its page token resets to page
+  1, so each later visit is a cheap ~2-unit check for new uploads. With ~200
+  channel sources and ~30 channel runs/day × 4 sources each, every channel
+  gets re-checked every couple of days.
 - **Refresh** (`45 3 * * *`) — re-checks the 50 stalest videos in one
   `videos.list` call (1 unit): updates metadata, marks vanished videos
   `removed`, and re-applies the filter so rule changes reach existing rows.
 
 `MAX_SOURCES_PER_RUN` is what actually keeps each invocation inside the
 free-tier envelope (10 ms CPU, 50 subrequests) — one source with results costs
-~10 subrequests. With 10 rotating sources (5 search, 5 channel uploads) and
-discovery every 20 minutes (72 runs/day), daily spend is up to ~7,200 of the
-10,000 units in the worst case (every run reaching the 100-unit target) and
-usually less — check `GET /status` for the real figure. That's ~72% of the
-daily cap in the worst case, so there's limited room left to add more
-sources or raise `DISCOVERY_QUOTA_TARGET` further without trading off
-against quota; the 72 invocations/day and the extra D1 reads/writes they
+~10 subrequests. Quota spend is governed almost entirely by the search
+cadence: `enabled searches × (1440 / SEARCH_INTERVAL_MINUTES) × ~101` units.
+At the defaults (7 searches, every 240 min) that's ~42 search runs ≈ 4,250
+units/day, plus a couple hundred for channel visits — roughly 4,500 of the
+10,000-unit cap, with the rest of the 72 daily runs spent on cheap channel
+sources. Check `GET /status` for the real figure. Lowering
+`SEARCH_INTERVAL_MINUTES` or enabling more search sources is what burns
+quota; adding channel sources is nearly free but stretches the channel
+revisit cadence. The 72 invocations/day and the extra D1 reads/writes they
 bring are trivial against Workers' 100k requests/day and D1's 5M rows
 read/day free-tier limits.
 
@@ -103,9 +116,12 @@ scores candidates and keeps those at or above `RELEVANCE_THRESHOLD`. Precedence:
 These weights are a starting point, not truth. `GET /stats` and the `crawl_log`
 table exist to tune them against real results.
 
-The crawler records every channel it meets into `channels` as `neutral`, so you
-can review and promote them without hunting for channel IDs. Read-only lookups
-are fine as an ad hoc query:
+The crawler records every channel it meets into `channels` as `neutral`, and
+once a channel accumulates `AUTO_PROMOTE_MIN_ACTIVE` accepted videos it is
+automatically added as a cheap `channel_uploads` source — but its *policy*
+stays `neutral`, so every upload is still scored. Promoting a channel to
+`allow` (skip the filter entirely) remains an operator decision. Read-only
+lookups are fine as an ad hoc query:
 
 ```bash
 wrangler d1 execute vera-video --remote --command \
