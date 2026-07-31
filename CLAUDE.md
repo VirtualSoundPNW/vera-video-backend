@@ -53,16 +53,28 @@ curl "http://localhost:8787/stats"                                        # insp
 ## Design decisions worth knowing before changing things
 
 - **Each cron run is deliberately bounded**, just not to a single source
-  anymore. Discovery loops sources (repeating the same one if it's the only
-  one enabled, to page deeper into a backlog) until it spends
-  `DISCOVERY_QUOTA_TARGET` — cheap `channel_uploads` sources (2 units) would
-  otherwise leave most of an hour's budget unused. `MAX_SOURCES_PER_RUN` in
-  `crawler.ts` (currently 4) is the real safety bound: it protects the
-  Workers free tier's **10 ms CPU, 50 subrequests/invocation** ceiling
-  independent of the quota target, since one source with results costs ~10
-  subrequests. Refresh stays bounded to one 50-video batch. Raising
-  `MAX_SOURCES_PER_RUN` needs the subrequest math re-checked, not just a
-  bigger number.
+  anymore. Discovery loops sources until it spends `DISCOVERY_QUOTA_TARGET`
+  or hits `MAX_SOURCES_PER_RUN` in `crawler.ts` (currently 4) — the latter is
+  the real safety bound: it protects the Workers free tier's **10 ms CPU, 50
+  subrequests/invocation** ceiling independent of the quota target, since one
+  source with results costs ~10 subrequests. Refresh stays bounded to one
+  50-video batch. Raising `MAX_SOURCES_PER_RUN` needs the subrequest math
+  re-checked, not just a bigger number.
+- **Search and channel sources are budgeted separately.** Search sources run
+  on a per-source cadence (`SEARCH_INTERVAL_MINUTES`) with first claim on a
+  run when due; all other runs fill with least-recently-crawled
+  `channel_uploads` sources. Don't fold them back into one LRU rotation: the
+  channel pool grows via auto-promotion, and in a shared rotation hundreds of
+  cheap channel sources would starve the searches — the only mechanism that
+  discovers *new* channels — down to ~1 crawl/day.
+- **Channels are auto-promoted to sources, not to trust.** After each search
+  crawl, `autoPromoteChannels` adds any channel with
+  `AUTO_PROMOTE_MIN_ACTIVE` filter-accepted videos as a `channel_uploads`
+  source (label suffixed `(auto)`), leaving `channels.policy` at `neutral` so
+  its uploads are still scored. Setting `policy='allow'` (skip scoring) stays
+  a manual operator decision. Auto-added source rows are runtime data —
+  reproducible by re-crawling — so they don't need a migration, unlike
+  operator tuning.
 - **Quota is billed per request, not per success.** `crawler.ts` adds
   `QUOTA_COST.*` *before* awaiting, so a failed call still shows up in
   `crawl_log`. Moving that after the await understates real burn.
@@ -134,16 +146,16 @@ for both venues; keep adding cases there rather than tweaking weights blind.
 - **Never commit secrets.** `YOUTUBE_API_KEY` and `STATUS_PAGE_KEY` live in
   `.dev.vars` (gitignored) locally and `wrangler secret put` in production.
   `.dev.vars.example` is the only one that gets committed.
-- **Watch the quota.** Default is 10,000 units/day. With `DISCOVERY_QUOTA_TARGET`
-  batching multiple sources into busier runs, actual daily spend depends on
-  the mix of sources hit each run — up to ~7,200 in the theoretical worst case
-  (every one of the 72 twenty-minute runs reaching the full 100-unit target),
-  likely less in practice since a cheap-source-heavy run hits
-  `MAX_SOURCES_PER_RUN` before it can reach the target. Check `GET /status`
-  for the real number. Any change that raises `search.list` frequency, page
-  depth, source count, `DISCOVERY_QUOTA_TARGET`, or the cron cadence needs to
-  be checked against that budget — there's not much headroom left above
-  ~7,200/day without risking the 10,000 cap on a bad day.
+- **Watch the quota.** Default is 10,000 units/day. Spend is governed almost
+  entirely by search cadence: `enabled searches × (1440 /
+  SEARCH_INTERVAL_MINUTES) × ~101` units — ~4,250/day at the defaults (7
+  searches, 240 min), plus a few hundred for cheap channel visits. Check
+  `GET /status` for the real number. Lowering `SEARCH_INTERVAL_MINUTES` or
+  enabling more search sources is what burns quota; adding channel sources is
+  nearly free quota-wise but stretches how often each channel gets
+  re-checked (~30 channel runs/day × 4 sources per run across the whole
+  pool). Any change to those knobs or the cron cadence needs to be re-checked
+  against the 10,000 cap.
 - **YouTube ToS**: this service only reads metadata via the official API. Video
   playback is the app's problem and must stay in the embedded IFrame player — do
   not add stream extraction or downloading here.

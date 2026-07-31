@@ -11,6 +11,8 @@ export function config(env: Env) {
     discoveryPageSize: clamp(int(env.DISCOVERY_PAGE_SIZE, 50), 1, 50),
     relevanceThreshold: int(env.RELEVANCE_THRESHOLD, 3),
     discoveryQuotaTarget: clamp(int(env.DISCOVERY_QUOTA_TARGET, 100), 1, 10_000),
+    searchIntervalMinutes: clamp(int(env.SEARCH_INTERVAL_MINUTES, 240), 0, 10_080),
+    autoPromoteMinActive: clamp(int(env.AUTO_PROMOTE_MIN_ACTIVE, 2), 1, 1_000),
   };
 }
 

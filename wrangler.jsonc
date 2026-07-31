@@ -35,7 +35,16 @@
 		"RELEVANCE_THRESHOLD": "3",
 		// Discovery keeps crawling sources within one run until spent quota
 		// reaches this (or the MAX_SOURCES_PER_RUN safety cap in crawler.ts).
-		"DISCOVERY_QUOTA_TARGET": "100"
+		"DISCOVERY_QUOTA_TARGET": "100",
+		// Each search source is re-crawled at most once per this interval;
+		// runs where no search is due go entirely to cheap channel sources.
+		// 240 min x 7 enabled searches ~= 42 search runs/day (~4,250 units).
+		"SEARCH_INTERVAL_MINUTES": "240",
+		// A channel with at least this many filter-accepted videos is
+		// auto-added as a channel_uploads source (its policy stays neutral —
+		// uploads are still filtered). 1 promotes one-hit channels too, which
+		// roughly triples the pool and stretches the revisit cadence.
+		"AUTO_PROMOTE_MIN_ACTIVE": "2"
 	}
 	// Secret (set with `wrangler secret put YOUTUBE_API_KEY`, never committed):
 	//   YOUTUBE_API_KEY - YouTube Data API v3 key, restricted to this Worker.

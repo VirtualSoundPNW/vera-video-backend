@@ -144,6 +144,97 @@ describe("source rotation", () => {
   });
 });
 
+describe("autoPromoteChannels", () => {
+  beforeEach(reset);
+
+  async function seedChannel(channelId: string, policy = "neutral", title = "Ch") {
+    await env.DB.prepare("INSERT INTO channels (channel_id, title, policy, first_seen) VALUES (?, ?, ?, '2026-01-01T00:00:00Z')")
+      .bind(channelId, title, policy)
+      .run();
+  }
+
+  async function seedActiveVideos(channelId: string, count: number, status = "active") {
+    const rows = Array.from({ length: count }, (_, i) =>
+      video(`${channelId}-v${i}`, { channelId, status: status as db.UpsertVideo["status"] })
+    );
+    await db.upsertVideos(env.DB, rows, "2026-07-01T00:00:00Z");
+  }
+
+  it("adds a channel_uploads source once a channel reaches the threshold", async () => {
+    await seedChannel("UCgood", "neutral", "Good Channel");
+    await seedActiveVideos("UCgood", 2);
+
+    expect(await db.autoPromoteChannels(env.DB, 2)).toBe(1);
+
+    const row = await env.DB.prepare("SELECT kind, label FROM sources WHERE value = 'UCgood'").first<any>();
+    expect(row).toMatchObject({ kind: "channel_uploads", label: "Good Channel uploads (auto)" });
+    // Crawl promotion must not touch trust: the filter still applies.
+    const channel = await env.DB.prepare("SELECT policy FROM channels WHERE channel_id = 'UCgood'").first<any>();
+    expect(channel.policy).toBe("neutral");
+  });
+
+  it("only counts active videos, not rejected or removed ones", async () => {
+    await seedChannel("UCnoisy");
+    await seedActiveVideos("UCnoisy", 1);
+    await db.upsertVideos(
+      env.DB,
+      [video("UCnoisy-r1", { channelId: "UCnoisy", status: "rejected" }), video("UCnoisy-r2", { channelId: "UCnoisy", status: "removed" })],
+      "2026-07-01T00:00:00Z"
+    );
+
+    expect(await db.autoPromoteChannels(env.DB, 2)).toBe(0);
+  });
+
+  it("never promotes a blocked channel", async () => {
+    await seedChannel("UCblocked", "block");
+    await seedActiveVideos("UCblocked", 5);
+
+    expect(await db.autoPromoteChannels(env.DB, 2)).toBe(0);
+  });
+
+  it("skips channels that are already sources, and is safe to re-run", async () => {
+    await seedChannel("UCgood");
+    await seedActiveVideos("UCgood", 3);
+
+    expect(await db.autoPromoteChannels(env.DB, 2)).toBe(1);
+    expect(await db.autoPromoteChannels(env.DB, 2)).toBe(0);
+
+    const row = await env.DB.prepare("SELECT COUNT(*) AS n FROM sources WHERE value = 'UCgood'").first<{ n: number }>();
+    expect(row!.n).toBe(1);
+  });
+
+  it("skips ids that cannot map to an uploads playlist", async () => {
+    await seedChannel("HCweirdid");
+    await seedActiveVideos("HCweirdid", 3);
+
+    expect(await db.autoPromoteChannels(env.DB, 2)).toBe(0);
+  });
+});
+
+describe("pickDueSearchSource", () => {
+  beforeEach(reset);
+
+  it("returns the stalest search source past the cutoff, never channel sources", async () => {
+    await env.DB.batch([
+      env.DB.prepare("INSERT INTO sources (kind, value, last_crawled_at) VALUES ('channel_uploads', 'UCa', '2019-01-01T00:00:00Z')"),
+      env.DB.prepare("INSERT INTO sources (kind, value, last_crawled_at) VALUES ('search', 'older', '2020-01-01T00:00:00Z')"),
+      env.DB.prepare("INSERT INTO sources (kind, value, last_crawled_at) VALUES ('search', 'newer', '2021-01-01T00:00:00Z')"),
+    ]);
+
+    expect((await db.pickDueSearchSource(env.DB, "2022-01-01T00:00:00Z"))!.value).toBe("older");
+  });
+
+  it("returns null when every search source is inside the interval", async () => {
+    await env.DB.prepare("INSERT INTO sources (kind, value, last_crawled_at) VALUES ('search', 'fresh', '2026-01-01T00:00:00Z')").run();
+    expect(await db.pickDueSearchSource(env.DB, "2025-01-01T00:00:00Z")).toBeNull();
+  });
+
+  it("treats never-crawled search sources as due", async () => {
+    await env.DB.prepare("INSERT INTO sources (kind, value) VALUES ('search', 'new')").run();
+    expect((await db.pickDueSearchSource(env.DB, "2020-01-01T00:00:00Z"))!.value).toBe("new");
+  });
+});
+
 describe("stalestVideoIds", () => {
   beforeEach(reset);
 
