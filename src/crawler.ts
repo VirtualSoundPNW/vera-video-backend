@@ -165,8 +165,10 @@ export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
     // Fill the rest of the run with channel sources. The unfiltered fallback
     // only matters when no channel sources exist yet (a fresh install seeded
     // with searches only): better to search ahead of cadence than sit idle.
+    // It only applies to the run's first pick, so a quota target above one
+    // search's cost (~101) can never chain two searches into the same run.
     source ??= await db.pickSource(env.DB, "channel_uploads");
-    source ??= await db.pickSource(env.DB);
+    if (!source && sourcesProcessed === 0) source = await db.pickSource(env.DB);
     if (!source) {
       if (sourcesProcessed === 0) console.warn("discovery: no enabled sources");
       break;

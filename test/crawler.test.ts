@@ -317,6 +317,32 @@ describe("runDiscovery — search cadence", () => {
 
     expect(calls[0]).toBe("/youtube/v3/search");
   });
+
+  it("packs one search plus channel fills into a run when the quota target allows", async () => {
+    const source = await seedSearchSource();
+    await env.DB.prepare("UPDATE sources SET last_crawled_at = '2020-01-01T00:00:00Z' WHERE id = ?").bind(source!.id).run();
+    await seedChannelSource("UCaaaaaaaaaaaaaaaaaaaaaa");
+    await seedChannelSource("UCbbbbbbbbbbbbbbbbbbbbbb");
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    const result = await runDiscovery({ ...env, DISCOVERY_QUOTA_TARGET: "110" } as unknown as Env);
+
+    // One search (101) + three channel visits (2 each) up to the source cap.
+    expect(result.apiUnits).toBe(107);
+    expect(calls.filter((c) => c.endsWith("/search")).length).toBe(1);
+    expect(calls.filter((c) => c.endsWith("/playlistItems")).length).toBe(3);
+  });
+
+  it("never chains a second search into the same run, even with quota to spare", async () => {
+    await seedSearchSource("query one");
+    await seedSearchSource("query two");
+    stubYouTube({ searchIds: ["v1"], videos: [{ id: "v1", title: "The Vera Project" }] });
+
+    const result = await runDiscovery({ ...env, DISCOVERY_QUOTA_TARGET: "500" } as unknown as Env);
+
+    expect(calls.filter((c) => c.endsWith("/search")).length).toBe(1);
+    expect(result.apiUnits).toBe(101);
+  });
 });
 
 describe("runDiscovery — auto-promotion", () => {
@@ -330,7 +356,9 @@ describe("runDiscovery — auto-promotion", () => {
       ],
     });
 
-    await runDiscovery(env);
+    // Pin the target to exactly one search so the run ends before the channel
+    // fill would crawl the just-promoted source and set its last_crawled_at.
+    await runDiscovery({ ...env, DISCOVERY_QUOTA_TARGET: "101" } as unknown as Env);
 
     const row = await env.DB.prepare("SELECT kind, label, enabled, last_crawled_at FROM sources WHERE value = 'UCprolific'").first<any>();
     expect(row).toMatchObject({ kind: "channel_uploads", label: "Prolific uploads (auto)", enabled: 1 });
