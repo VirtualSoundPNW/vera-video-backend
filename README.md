@@ -57,19 +57,20 @@ Each response includes a `cursor` — pass it as `since` on the next sync.
 
 Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 
-- **Discovery** (`*/20 * * * *`, every 20 minutes) — budgets the two source
-  kinds separately, then crawls until it spends `DISCOVERY_QUOTA_TARGET`
-  (default 110 units) or hits the `MAX_SOURCES_PER_RUN` safety cap (4). Each
-  **search** source runs on a fixed cadence (`SEARCH_INTERVAL_MINUTES`,
-  default 140): when the stalest search source is due it gets the run's
-  first slot, and the rest of the run is filled with least-recently-crawled
-  **channel** sources — the 110-unit target deliberately fits one search
-  (~101) plus three channel fills (~107 total). Search costs 100 quota units
-  per page; results are then hydrated with a `videos.list` call (1 unit)
-  because search snippets carry no tags, truncated descriptions and no
-  duration — one extra unit buys much better filtering input. Channel
-  sources cost 1 unit/page via `playlistItems.list` instead (~2 units per
-  visit including hydration).
+- **Discovery** (`0 * * * *`, hourly — cut from every 20 minutes since new
+  videos are rare enough that 3x less frequent checking is plenty) — budgets
+  the two source kinds separately, then crawls until it spends
+  `DISCOVERY_QUOTA_TARGET` (default 110 units) or hits the
+  `MAX_SOURCES_PER_RUN` safety cap (4). Each **search** source runs on a
+  fixed cadence (`SEARCH_INTERVAL_MINUTES`, default 420): when the stalest
+  search source is due it gets the run's first slot, and the rest of the run
+  is filled with least-recently-crawled **channel** sources — the 110-unit
+  target deliberately fits one search (~101) plus three channel fills (~107
+  total). Search costs 100 quota units per page; results are then hydrated
+  with a `videos.list` call (1 unit) because search snippets carry no tags,
+  truncated descriptions and no duration — one extra unit buys much better
+  filtering input. Channel sources cost 1 unit/page via `playlistItems.list`
+  instead (~2 units per visit including hydration).
 
   After each search crawl, any channel that has accumulated
   `AUTO_PROMOTE_MIN_ACTIVE` (default 2) filter-accepted videos is
@@ -79,8 +80,8 @@ Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
   every upload; only manual `allow` promotion skips scoring. A channel whose
   backlog is exhausted stays in the rotation: its page token resets to page
   1, so each later visit is a cheap ~2-unit check for new uploads. With ~200
-  channel sources and ~3 channel fills on each of the 72 daily runs (~216
-  visits/day), every channel gets re-checked about daily.
+  channel sources and ~3 channel fills on each of the 24 daily runs (~72
+  visits/day), every channel gets re-checked roughly every three days.
 - **Refresh** (`45 3 * * *`) — re-checks the 50 stalest videos in one
   `videos.list` call (1 unit): updates metadata, marks vanished videos
   `removed`, and re-applies the filter so rule changes reach existing rows.
@@ -89,13 +90,13 @@ Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
 free-tier envelope (10 ms CPU, 50 subrequests) — one source with results costs
 ~10 subrequests. Quota spend is governed almost entirely by the search
 cadence: `enabled searches × (1440 / SEARCH_INTERVAL_MINUTES) × ~101` units,
-capped at 72 search runs/day (one per cron invocation). At the defaults (7
-searches, every 140 min) that cap is exactly met: every run does one search
-plus ~3 channel fills, ~72 × 107 ≈ 7,700 units/day (~77% of the 10,000-unit
+capped at 24 search runs/day (one per cron invocation). At the defaults (7
+searches, every 420 min) that cap is exactly met: every run does one search
+plus ~3 channel fills, ~24 × 107 ≈ 2,570 units/day (~26% of the 10,000-unit
 cap). Check `GET /status` for the real figure. Lowering
 `SEARCH_INTERVAL_MINUTES` or enabling more search sources is what burns
 quota; adding channel sources is nearly free but stretches the channel
-revisit cadence. The 72 invocations/day and the extra D1 reads/writes they
+revisit cadence. The 24 invocations/day and the extra D1 reads/writes they
 bring are trivial against Workers' 100k requests/day and D1's 5M rows
 read/day free-tier limits.
 
@@ -181,7 +182,7 @@ npm run deploy
 Trigger the cron jobs by hand against `wrangler dev`:
 
 ```bash
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/20+*+*+*+*"  # discovery
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"     # discovery
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"    # refresh
 curl "http://localhost:8787/stats"                                        # inspect the result
 ```
