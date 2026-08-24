@@ -17,12 +17,13 @@
 	],
 	"triggers": {
 		// Two schedules, distinguished by controller.cron in src/index.ts:
-		//  - discovery runs every 20 minutes, crawling rotating sources until
-		//    it spends DISCOVERY_QUOTA_TARGET or hits the per-invocation
-		//    source cap
+		//  - discovery runs hourly (cut from every 20 min — new videos are rare
+		//    enough that 3x less frequent checking is plenty), crawling
+		//    rotating sources until it spends DISCOVERY_QUOTA_TARGET or hits
+		//    the per-invocation source cap
 		//  - refresh runs nightly and re-checks a batch of the stalest videos
 		"crons": [
-			"*/20 * * * *",
+			"0 * * * *",
 			"45 3 * * *"
 		]
 	},
@@ -41,10 +42,11 @@
 		"DISCOVERY_QUOTA_TARGET": "110",
 		// Each search source is re-crawled at most once per this interval;
 		// runs where no search is due go entirely to cheap channel sources.
-		// 140 min x 7 enabled searches = 72 search runs/day — every 20-min
-		// run carries one search plus channel fills: 72 x ~107 ~= 7,700
-		// units/day (~77% of the 10,000 cap). Raise this to spend less.
-		"SEARCH_INTERVAL_MINUTES": "140",
+		// 420 min x 7 enabled searches = 24 search runs/day, matching the
+		// hourly cron's 24 invocations/day: every run carries one search plus
+		// channel fills, 24 x ~107 ~= 2,570 units/day (~26% of the 10,000
+		// cap). Raise this to spend less.
+		"SEARCH_INTERVAL_MINUTES": "420",
 		// A channel with at least this many filter-accepted videos is
 		// auto-added as a channel_uploads source (its policy stays neutral —
 		// uploads are still filtered). 1 promotes one-hit channels too, which

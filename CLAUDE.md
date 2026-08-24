@@ -31,7 +31,7 @@ Trigger the cron jobs by hand against `wrangler dev` — note the path is
 Cloudflare skill still show; it falls through to the Hono router and 404s):
 
 ```bash
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=*/20+*+*+*+*"  # discovery
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"     # discovery
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"    # refresh
 curl "http://localhost:8787/stats"                                        # inspect result
 ```
@@ -148,17 +148,20 @@ for both venues; keep adding cases there rather than tweaking weights blind.
   `.dev.vars.example` is the only one that gets committed.
 - **Watch the quota.** Default is 10,000 units/day. Spend is governed almost
   entirely by search cadence: `enabled searches × (1440 /
-  SEARCH_INTERVAL_MINUTES) × ~101` units, capped at 72 search runs/day (one
+  SEARCH_INTERVAL_MINUTES) × ~101` units, capped at 24 search runs/day (one
   search per cron invocation, enforced in `runDiscovery`). The defaults (7
-  searches, 140 min, `DISCOVERY_QUOTA_TARGET=110`) sit exactly at that cap:
-  every 20-minute run does one search plus ~3 cheap channel fills, ~72 × 107
-  ≈ 7,700/day (~77% — deliberately, per operator preference). Check
-  `GET /status` for the real number. Enabling more search sources no longer
-  raises spend past the 72-run ceiling — it spreads the same budget across
-  more queries; adding channel sources is nearly free quota-wise but
-  stretches how often each channel gets re-checked (~216 channel visits/day
-  across the whole pool). Any change to those knobs, `MAX_SOURCES_PER_RUN`,
-  or the cron cadence needs re-checking against the 10,000 cap.
+  searches, 420 min, `DISCOVERY_QUOTA_TARGET=110`) sit exactly at that cap:
+  every hourly run does one search plus ~3 cheap channel fills, ~24 × 107
+  ≈ 2,570/day (~26% of the cap). The cron was cut from every 20 minutes to
+  hourly — new videos are rare enough that 3x less frequent checking is
+  plenty, and `SEARCH_INTERVAL_MINUTES` was tripled alongside it (140 → 420)
+  to stay matched to the new invocation cap. Check `GET /status` for the
+  real number. Enabling more search sources no longer raises spend past the
+  24-run ceiling — it spreads the same budget across more queries; adding
+  channel sources is nearly free quota-wise but stretches how often each
+  channel gets re-checked (~72 channel visits/day across the whole pool).
+  Any change to those knobs, `MAX_SOURCES_PER_RUN`, or the cron cadence
+  needs re-checking against the 10,000 cap.
 - **YouTube ToS**: this service only reads metadata via the official API. Video
   playback is the app's problem and must stay in the embedded IFrame player — do
   not add stream extraction or downloading here.
