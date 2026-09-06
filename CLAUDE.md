@@ -32,7 +32,7 @@ Cloudflare skill still show; it falls through to the Hono router and 404s):
 
 ```bash
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"     # discovery
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"    # refresh
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+*+*+*+*"    # refresh
 curl "http://localhost:8787/stats"                                        # inspect result
 ```
 
@@ -89,6 +89,20 @@ curl "http://localhost:8787/stats"                                        # insp
   always moves and is deliberately excluded from that comparison.
 - **Videos are never hard-deleted**; a vanished video becomes `status='removed'`
   so clients can prune. `rejected` rows are kept too, for filter tuning.
+- **"Vanished" includes unplayable, not just absent.** `videos.list` keeps
+  returning full metadata for a video whose owner made it private or disabled
+  embedding — it hasn't disappeared from the API, but it's still unplayable in
+  the app's embedded IFrame player. `runRefresh` treats both cases (missing
+  entirely, or returned but failing `isPlayable` in `src/youtube.ts`) as
+  removed. This is common for ended livestreams, which is why "video
+  unavailable" reports skew toward `[LIVE]`-titled videos — but the title
+  itself is not the signal to check.
+- **`refresh` now runs hourly** (`45 * * * *`, offset from discovery's `:00`)
+  instead of nightly, specifically so this playability check reaches the
+  whole active catalog roughly weekly instead of over months — at
+  `REFRESH_BATCH_SIZE=30` that's 24 × 30 = 720 checks/day for +24 quota
+  units/day. Raising the batch size or adding a separate cron for this needs
+  the same daily-checks-vs-catalog-size math re-done.
 - **`refresh` only re-scores `status='active'` rows** (`stalestVideoIds`
   filters on it). A filter change that should *rescue* previously-rejected
   videos won't reach them on its own — check for stuck `rejected` rows
@@ -161,7 +175,10 @@ for both venues; keep adding cases there rather than tweaking weights blind.
   channel sources is nearly free quota-wise but stretches how often each
   channel gets re-checked (~72 channel visits/day across the whole pool).
   Any change to those knobs, `MAX_SOURCES_PER_RUN`, or the cron cadence
-  needs re-checking against the 10,000 cap.
+  needs re-checking against the 10,000 cap. Refresh's hourly cron adds a flat
+  +24 units/day on top of that (1 unit/run regardless of `REFRESH_BATCH_SIZE`,
+  since a `videos.list` call is billed per call, not per id) — negligible, but
+  count it if you also raise discovery's spend closer to the cap.
 - **YouTube ToS**: this service only reads metadata via the official API. Video
   playback is the app's problem and must stay in the embedded IFrame player — do
   not add stream extraction or downloading here.

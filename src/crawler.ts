@@ -15,6 +15,7 @@ import { evaluate } from "./filter";
 import {
   QUOTA_COST,
   fetchVideoDetails,
+  isPlayable,
   playlistPage,
   searchPage,
   uploadsPlaylistId,
@@ -197,8 +198,18 @@ export async function runDiscovery(env: Env): Promise<db.CrawlResult> {
 
 /**
  * Re-check the stalest active videos: refresh titles/thumbnails/durations,
- * mark vanished ones removed, and re-apply the filter so that tuning the rules
- * (or adding an override) eventually propagates to already-stored rows.
+ * mark vanished or unplayable ones removed, and re-apply the filter so that
+ * tuning the rules (or adding an override) eventually propagates to
+ * already-stored rows.
+ *
+ * "Vanished" covers two cases YouTube reports differently. A fully deleted or
+ * fully private video is simply absent from the videos.list response (see
+ * fetchVideoDetails). But a video can also come back *with* metadata while
+ * being unplayable in the app's embedded IFrame player — embedding disabled,
+ * or privacy flipped after the fact (common for ended livestreams, which is
+ * why a "video unavailable" report tends to have [LIVE] in the title) — so
+ * every returned video is also checked with isPlayable before it is allowed
+ * to stay (or become) active.
  */
 export async function runRefresh(env: Env): Promise<db.CrawlResult> {
   const at = new Date().toISOString();
@@ -216,10 +227,14 @@ export async function runRefresh(env: Env): Promise<db.CrawlResult> {
 
       const returned = new Set(videos.map((v) => v.videoId));
       const missing = ids.filter((id) => !returned.has(id));
-      if (missing.length > 0) await db.markRemoved(env.DB, missing, at);
+      const unplayable = videos.filter((v) => !isPlayable(v)).map((v) => v.videoId);
+      const gone = [...missing, ...unplayable];
+      if (gone.length > 0) await db.markRemoved(env.DB, gone, at);
+      result.removed = gone.length;
 
-      if (videos.length > 0) {
-        const counts = await scoreAndStore(env, videos, at);
+      const playable = videos.filter((v) => isPlayable(v));
+      if (playable.length > 0) {
+        const counts = await scoreAndStore(env, playable, at);
         result.kept = counts.kept;
         result.rejected = counts.rejected;
       }
@@ -235,5 +250,5 @@ export async function runRefresh(env: Env): Promise<db.CrawlResult> {
 
 /** Map a cron expression to its job. Keep in sync with triggers in wrangler.jsonc. */
 export function jobForCron(cron: string): CrawlKind {
-  return cron === "45 3 * * *" ? "refresh" : "discovery";
+  return cron === "45 * * * *" ? "refresh" : "discovery";
 }

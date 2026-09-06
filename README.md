@@ -29,7 +29,7 @@ Routing uses **Hono**; tests run in the real Workers runtime via
 | `GET /catalog` | Full catalog: active videos, newest first. |
 | `GET /catalog?since=<iso8601>` | Delta: only rows changed since the cursor, including removals so clients can prune. |
 | `GET /stats` | Catalog size and recent crawl history. |
-| `GET /status?key=<STATUS_PAGE_KEY>&days=<7\|30\|90>` | Human-readable dashboard: videos over time, quota burn, crawl errors, endpoint traffic — each chart has axis scales and gridlines, and `days` (default 30) picks the window. Gated by a secret key; wrong/missing key 404s. |
+| `GET /status?key=<STATUS_PAGE_KEY>&days=<7\|30\|90>` | Human-readable dashboard: videos over time, catalog availability (a pie of active vs. refresh-removed), refresh's daily checked/marked-unavailable counts, quota burn, crawl errors, endpoint traffic — each chart has axis scales and gridlines, and `days` (default 30) picks the window. Gated by a secret key; wrong/missing key 404s. |
 | `GET /health` | Liveness. |
 
 Responses carry an `ETag`; send it back as `If-None-Match` to get a `304`.
@@ -82,9 +82,19 @@ Two cron schedules, dispatched by `controller.cron` in `src/index.ts`:
   1, so each later visit is a cheap ~2-unit check for new uploads. With ~200
   channel sources and ~3 channel fills on each of the 24 daily runs (~72
   visits/day), every channel gets re-checked roughly every three days.
-- **Refresh** (`45 3 * * *`) — re-checks the 50 stalest videos in one
-  `videos.list` call (1 unit): updates metadata, marks vanished videos
-  `removed`, and re-applies the filter so rule changes reach existing rows.
+- **Refresh** (`45 * * * *`, hourly) — re-checks the `REFRESH_BATCH_SIZE`
+  (default 30) stalest active videos in one `videos.list` call (1 unit):
+  updates metadata, re-applies the filter so rule changes reach existing rows,
+  and marks a video `removed` if it's either gone (absent from the response —
+  deleted or fully private) or still returned but unplayable in the app's
+  embedded IFrame player (`status.privacyStatus === "private"` or
+  `status.embeddable === false`; see `isPlayable` in `src/youtube.ts`). That
+  second case is why "video unavailable" reports skew toward `[LIVE]`-titled
+  videos: a livestream can end and flip private, or have embedding disabled,
+  while videos.list keeps returning its metadata as if nothing changed — title
+  alone isn't a reliable signal, so this checks actual playability instead. At
+  the default batch size that's 24 × 30 = 720 checks/day, cycling a
+  ~5,000-video catalog in under a week, for +24 quota units/day.
 
 `MAX_SOURCES_PER_RUN` is what actually keeps each invocation inside the
 free-tier envelope (10 ms CPU, 50 subrequests) — one source with results costs
@@ -183,7 +193,7 @@ Trigger the cron jobs by hand against `wrangler dev`:
 
 ```bash
 curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=0+*+*+*+*"     # discovery
-curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+3+*+*+*"    # refresh
+curl "http://localhost:8787/cdn-cgi/handler/scheduled?cron=45+*+*+*+*"    # refresh
 curl "http://localhost:8787/stats"                                        # inspect the result
 ```
 

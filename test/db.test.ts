@@ -328,6 +328,20 @@ describe("status page queries", () => {
     expect(await db.quotaUsedToday(env.DB)).toBe(151);
   });
 
+  it("aggregates refresh checks and removals per day, ignoring discovery runs", async () => {
+    const at = new Date().toISOString();
+    const refresh = await db.startCrawl(env.DB, "refresh", null, at);
+    await db.finishCrawl(env.DB, refresh, { apiUnits: 1, fetched: 30, kept: 25, rejected: 3, added: 0, removed: 2 }, at);
+    const discovery = await db.startCrawl(env.DB, "discovery", null, at);
+    await db.finishCrawl(env.DB, discovery, { apiUnits: 101, fetched: 50, kept: 40, rejected: 10, added: 5 }, at);
+
+    const rows = await db.refreshActivityByDay(env.DB, 30);
+    const checked = rows.reduce((sum, r) => sum + r.checked, 0);
+    const removed = rows.reduce((sum, r) => sum + r.removed, 0);
+    expect(checked).toBe(30);
+    expect(removed).toBe(2);
+  });
+
   it("lists only crawls that recorded an error, most recent first", async () => {
     const at = new Date().toISOString();
     const ok = await db.startCrawl(env.DB, "discovery", null, at);

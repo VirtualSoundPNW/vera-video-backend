@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { barChart, sparkline } from "../src/charts";
+import { barChart, pieChart, sparkline } from "../src/charts";
 
 describe("sparkline", () => {
   it("renders a placeholder for empty data", () => {
@@ -88,5 +88,38 @@ describe("barChart", () => {
     ]);
     expect(svg.match(/<line/g)?.length).toBe(3); // 0%, 50%, 100% gridlines
     expect(svg).toContain(">8<");
+  });
+});
+
+describe("pieChart", () => {
+  it("renders a placeholder when every slice is zero", () => {
+    const svg = pieChart([
+      { label: "available", value: 0 },
+      { label: "removed", value: 0 },
+    ]);
+    expect(svg).toContain("no data yet");
+  });
+
+  it("renders one arc per slice", () => {
+    const svg = pieChart([
+      { label: "available", value: 8 },
+      { label: "removed", value: 2 },
+    ]);
+    expect(svg.match(/<circle/g)).toHaveLength(2);
+    expect(svg).not.toContain("NaN");
+  });
+
+  it("labels the legend with counts and percentages", () => {
+    const svg = pieChart([
+      { label: "available", value: 3 },
+      { label: "removed", value: 1 },
+    ]);
+    expect(svg).toContain("available: 3 (75%)");
+    expect(svg).toContain("removed: 1 (25%)");
+  });
+
+  it("escapes label text", () => {
+    const svg = pieChart([{ label: "<b>bold</b>", value: 1 }]);
+    expect(svg).not.toContain("<b>bold</b>");
   });
 });

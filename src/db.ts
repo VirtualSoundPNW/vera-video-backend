@@ -330,6 +330,8 @@ export interface CrawlResult {
   kept: number;
   rejected: number;
   added: number;
+  /** Marked removed this run (gone or unplayable) — only refresh sets this. */
+  removed?: number;
   error?: string;
 }
 
@@ -337,10 +339,20 @@ export async function finishCrawl(db: D1Database, id: number, result: CrawlResul
   await db
     .prepare(
       `UPDATE crawl_log
-          SET finished_at = ?, api_units = ?, fetched = ?, kept = ?, rejected = ?, added = ?, error = ?
+          SET finished_at = ?, api_units = ?, fetched = ?, kept = ?, rejected = ?, added = ?, removed = ?, error = ?
         WHERE id = ?`
     )
-    .bind(at, result.apiUnits, result.fetched, result.kept, result.rejected, result.added, result.error ?? null, id)
+    .bind(
+      at,
+      result.apiUnits,
+      result.fetched,
+      result.kept,
+      result.rejected,
+      result.added,
+      result.removed ?? 0,
+      result.error ?? null,
+      id
+    )
     .run();
 }
 
@@ -382,6 +394,32 @@ export async function videosAddedByDay(db: D1Database, sinceDays: number): Promi
     )
     .bind(`-${sinceDays} days`)
     .all<DayCount>();
+  return results;
+}
+
+export interface RefreshDayCounts {
+  day: string;
+  checked: number;
+  removed: number;
+}
+
+/**
+ * Refresh's hourly liveness check, per day: how many videos it re-checked
+ * (`fetched`) and how many of those it found gone or unplayable (`removed`) —
+ * see isPlayable in src/youtube.ts. Discovery runs are excluded; they don't
+ * set `removed`.
+ */
+export async function refreshActivityByDay(db: D1Database, sinceDays: number): Promise<RefreshDayCounts[]> {
+  const { results } = await db
+    .prepare(
+      `SELECT date(started_at) AS day, SUM(fetched) AS checked, SUM(removed) AS removed
+         FROM crawl_log
+        WHERE kind = 'refresh' AND started_at >= date('now', ?)
+        GROUP BY day
+        ORDER BY day`
+    )
+    .bind(`-${sinceDays} days`)
+    .all<RefreshDayCounts>();
   return results;
 }
 

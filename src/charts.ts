@@ -121,3 +121,53 @@ export function barChart(bars: Point[]): string {
   ${rows}
 </svg>`;
 }
+
+const PIE_SIZE = 160;
+const PIE_RADIUS = 60;
+const PIE_STROKE = 28;
+/** Distinguishes slices via opacity alone, matching the monochrome (currentColor) theme of the other charts. */
+const PIE_OPACITIES = [0.85, 0.35, 0.6, 0.2];
+
+/** Donut chart for a small set of mutually exclusive categories (e.g. catalog availability). */
+export function pieChart(slices: Point[]): string {
+  const cx = PIE_SIZE / 2;
+  const cy = PIE_SIZE / 2;
+  const circumference = 2 * Math.PI * PIE_RADIUS;
+  const total = slices.reduce((sum, s) => sum + s.value, 0);
+
+  if (total === 0) {
+    return `<svg width="${PIE_SIZE}" height="${PIE_SIZE}" viewBox="0 0 ${PIE_SIZE} ${PIE_SIZE}"><text x="${cx}" y="${cy}" text-anchor="middle" fill="#888" font-size="11">no data yet</text></svg>`;
+  }
+
+  let offset = 0;
+  const arcs = slices
+    .map((s, i) => {
+      const len = (s.value / total) * circumference;
+      const opacity = PIE_OPACITIES[i % PIE_OPACITIES.length];
+      const arc = `<circle cx="${cx}" cy="${cy}" r="${PIE_RADIUS}" fill="none" stroke="currentColor" stroke-opacity="${opacity}"
+    stroke-width="${PIE_STROKE}" stroke-dasharray="${len.toFixed(1)} ${(circumference - len).toFixed(1)}"
+    stroke-dashoffset="${(-offset).toFixed(1)}" transform="rotate(-90 ${cx} ${cy})">
+    <title>${escapeXml(s.label)}: ${s.value} (${Math.round((s.value / total) * 100)}%)</title>
+  </circle>`;
+      offset += len;
+      return arc;
+    })
+    .join("\n  ");
+
+  const legend = slices
+    .map((s, i) => {
+      const pct = Math.round((s.value / total) * 100);
+      const opacity = PIE_OPACITIES[i % PIE_OPACITIES.length];
+      return `<div class="pie-legend-row"><span class="pie-swatch" style="opacity:${opacity}"></span>${escapeXml(s.label)}: ${s.value} (${pct}%)</div>`;
+    })
+    .join("\n  ");
+
+  return `<div class="pie-wrap">
+  <svg width="${PIE_SIZE}" height="${PIE_SIZE}" viewBox="0 0 ${PIE_SIZE} ${PIE_SIZE}" role="img">
+  ${arcs}
+  </svg>
+  <div class="pie-legend">
+  ${legend}
+  </div>
+</div>`;
+}

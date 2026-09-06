@@ -40,6 +40,20 @@ export interface Page {
 /** Full details for one video, from videos.list. */
 export interface VideoDetails extends Candidate {
   durationSeconds: number | null;
+  /** false when the owner has disabled embedding — unplayable in the app's IFrame player. */
+  embeddable: boolean;
+  privacyStatus: string;
+}
+
+/**
+ * A video can still be returned by videos.list (it "exists") while being
+ * unplayable in the app's embedded IFrame player: `private` videos return
+ * metadata to the uploader's own key in some cases, and embedding can be
+ * disabled independently of visibility. `unlisted` is deliberately excluded —
+ * it plays fine embedded, it just doesn't show up in search.
+ */
+export function isPlayable(video: Pick<VideoDetails, "embeddable" | "privacyStatus">): boolean {
+  return video.privacyStatus !== "private" && video.embeddable !== false;
 }
 
 async function call(path: string, params: Record<string, string>, apiKey: string): Promise<any> {
@@ -141,10 +155,11 @@ export async function fetchVideoDetails(videoIds: string[], apiKey: string): Pro
   if (videoIds.length === 0) return [];
   if (videoIds.length > 50) throw new Error("fetchVideoDetails accepts at most 50 ids per call");
 
-  const data = await call("videos", { part: "snippet,contentDetails", id: videoIds.join(",") }, apiKey);
+  const data = await call("videos", { part: "snippet,contentDetails,status", id: videoIds.join(",") }, apiKey);
 
   return (data.items ?? []).map((item: any) => {
     const snippet = item.snippet ?? {};
+    const status = item.status ?? {};
     return {
       videoId: item.id,
       title: snippet.title ?? "",
@@ -155,6 +170,8 @@ export async function fetchVideoDetails(videoIds: string[], apiKey: string): Pro
       thumbnailUrl: bestThumbnail(snippet.thumbnails),
       tags: Array.isArray(snippet.tags) ? snippet.tags : [],
       durationSeconds: item.contentDetails?.duration ? parseDuration(item.contentDetails.duration) : null,
+      embeddable: status.embeddable ?? true,
+      privacyStatus: status.privacyStatus ?? "public",
     };
   });
 }

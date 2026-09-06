@@ -21,15 +21,24 @@
 		//    enough that 3x less frequent checking is plenty), crawling
 		//    rotating sources until it spends DISCOVERY_QUOTA_TARGET or hits
 		//    the per-invocation source cap
-		//  - refresh runs nightly and re-checks a batch of the stalest videos
+		//  - refresh runs hourly too (offset to :45 so it never shares an
+		//    invocation with discovery), re-checking REFRESH_BATCH_SIZE of the
+		//    stalest active videos for both existence and playability (see
+		//    isPlayable in src/youtube.ts). At the default batch size that's
+		//    24 x 30 = 720 checks/day — under a week to cycle a ~5,000-video
+		//    catalog — for +24 quota units/day, negligible against the cap. A
+		//    nightly-only cadence left a vanished/unembeddable video active
+		//    for weeks before it was next checked.
 		"crons": [
 			"0 * * * *",
-			"45 3 * * *"
+			"45 * * * *"
 		]
 	},
 	"vars": {
-		// Max videos.list ids re-checked per refresh run (YouTube caps at 50/call).
-		"REFRESH_BATCH_SIZE": "50",
+		// Max videos.list ids re-checked per refresh run (YouTube caps at
+		// 50/call). Kept low because refresh now runs hourly, not nightly:
+		// 24 runs/day x this value is the daily check volume.
+		"REFRESH_BATCH_SIZE": "30",
 		// Max results requested per discovery page (YouTube caps at 50).
 		"DISCOVERY_PAGE_SIZE": "50",
 		// Keep score threshold for the relevance filter. See src/filter.ts.
