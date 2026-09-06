@@ -1,6 +1,6 @@
 /** Data gathering and HTML rendering for the operator-only GET /status page. */
 
-import { barChart, sparkline, type Point } from "./charts";
+import { barChart, pieChart, sparkline, type Point } from "./charts";
 import * as db from "./db";
 
 /** YouTube's default per-project cap; not something this app configures. */
@@ -26,6 +26,7 @@ export interface StatusData {
   lastUpdated: string | null;
   videosByStatus: Record<string, number>;
   videosAddedByDay: db.DayCount[];
+  refreshActivityByDay: db.RefreshDayCounts[];
   quotaUsedToday: number;
   quotaUsedByDay: db.DayCount[];
   recentCrawlErrors: unknown[];
@@ -34,10 +35,11 @@ export interface StatusData {
 }
 
 export async function gatherStatusData(d1: D1Database, windowDays: number): Promise<StatusData> {
-  const [meta, statusCounts, videosByDay, quotaToday, quotaByDay, errors, usage, hitsByDay] = await Promise.all([
+  const [meta, statusCounts, videosByDay, refreshByDay, quotaToday, quotaByDay, errors, usage, hitsByDay] = await Promise.all([
     db.catalogMeta(d1),
     db.videosByStatus(d1),
     db.videosAddedByDay(d1, windowDays),
+    db.refreshActivityByDay(d1, windowDays),
     db.quotaUsedToday(d1),
     db.quotaUsedByDay(d1, windowDays),
     db.recentCrawlErrors(d1, 20),
@@ -51,6 +53,7 @@ export async function gatherStatusData(d1: D1Database, windowDays: number): Prom
     lastUpdated: meta.maxUpdated,
     videosByStatus: statusCounts,
     videosAddedByDay: videosByDay,
+    refreshActivityByDay: refreshByDay,
     quotaUsedToday: quotaToday,
     quotaUsedByDay: quotaByDay,
     recentCrawlErrors: errors,
@@ -61,6 +64,10 @@ export async function gatherStatusData(d1: D1Database, windowDays: number): Prom
 
 function toPoints(rows: db.DayCount[]): Point[] {
   return rows.map((r) => ({ label: r.day, value: r.count }));
+}
+
+function toRefreshPoints(rows: db.RefreshDayCounts[], key: "checked" | "removed"): Point[] {
+  return rows.map((r) => ({ label: r.day, value: r[key] }));
 }
 
 function escapeHtml(s: string): string {
@@ -109,6 +116,9 @@ export function renderStatusPage(data: StatusData, key: string): string {
   .range { margin-top: 0.5rem; }
   .range a { color: inherit; }
   .range-active { font-weight: 600; text-decoration: underline; }
+  .pie-wrap { display: flex; align-items: center; gap: 1.5rem; flex-wrap: wrap; }
+  .pie-legend-row { display: flex; align-items: center; gap: 0.5rem; margin: 0.25rem 0; }
+  .pie-swatch { display: inline-block; width: 0.75rem; height: 0.75rem; border-radius: 2px; background: currentColor; }
 </style>
 </head>
 <body>
@@ -127,6 +137,19 @@ ${sparkline(toPoints(data.videosAddedByDay))}
 
 <h2>Catalog by status</h2>
 ${barChart(Object.entries(data.videosByStatus).map(([label, value]) => ({ label, value })))}
+
+<h2>Catalog availability</h2>
+<p class="muted">Active videos vs. ones the hourly refresh check found gone or unplayable (see <code>isPlayable</code> in <code>src/youtube.ts</code>). Rejected (off-topic) rows are excluded — they were never visible to the app.</p>
+${pieChart([
+  { label: "available", value: data.videosByStatus.active ?? 0 },
+  { label: "not available (removed)", value: data.videosByStatus.removed ?? 0 },
+])}
+
+<h2>Refresh: videos checked per day (last ${data.windowDays} days)</h2>
+${sparkline(toRefreshPoints(data.refreshActivityByDay, "checked"))}
+
+<h2>Refresh: marked unavailable per day (last ${data.windowDays} days)</h2>
+${sparkline(toRefreshPoints(data.refreshActivityByDay, "removed"))}
 
 <h2>YouTube quota used per day (last ${data.windowDays} days)</h2>
 ${sparkline(toPoints(data.quotaUsedByDay))}

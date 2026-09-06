@@ -15,6 +15,8 @@ interface StubVideo {
   channelId?: string;
   channelTitle?: string;
   duration?: string;
+  privacyStatus?: string;
+  embeddable?: boolean;
 }
 
 /** Build a videos.list item as the API would return it. */
@@ -31,6 +33,10 @@ function videoItem(v: StubVideo) {
       tags: [],
     },
     contentDetails: { duration: v.duration ?? "PT3M0S" },
+    status: {
+      privacyStatus: v.privacyStatus ?? "public",
+      embeddable: v.embeddable ?? true,
+    },
   };
 }
 
@@ -452,8 +458,12 @@ describe("runRefresh", () => {
     const result = await runRefresh(env);
 
     expect(result.apiUnits).toBe(1);
+    expect(result.removed).toBe(1);
     const row = await env.DB.prepare("SELECT status FROM videos WHERE video_id='gone'").first<any>();
     expect(row.status).toBe("removed");
+
+    const log = await env.DB.prepare("SELECT removed FROM crawl_log").first<any>();
+    expect(log.removed).toBe(1);
   });
 
   it("refreshes metadata for videos that still exist", async () => {
@@ -493,6 +503,39 @@ describe("runRefresh", () => {
     expect(row.status).toBe("rejected");
   });
 
+  // A livestream that ends and turns private is still returned by videos.list
+  // with full metadata — absence alone can't catch it, which is why reports of
+  // "video unavailable" skew toward [LIVE]-titled videos.
+  it("marks a video removed when it comes back private, even though it still exists", async () => {
+    await seedActive("v1");
+    stubYouTube({ videos: [{ id: "v1", title: "The Vera Project", privacyStatus: "private" }] });
+
+    await runRefresh(env);
+
+    const row = await env.DB.prepare("SELECT status FROM videos WHERE video_id='v1'").first<any>();
+    expect(row.status).toBe("removed");
+  });
+
+  it("marks a video removed when embedding has been disabled", async () => {
+    await seedActive("v1");
+    stubYouTube({ videos: [{ id: "v1", title: "The Vera Project", embeddable: false }] });
+
+    await runRefresh(env);
+
+    const row = await env.DB.prepare("SELECT status FROM videos WHERE video_id='v1'").first<any>();
+    expect(row.status).toBe("removed");
+  });
+
+  it("does not treat an unlisted video as unavailable", async () => {
+    await seedActive("v1");
+    stubYouTube({ videos: [{ id: "v1", title: "The Vera Project", privacyStatus: "unlisted" }] });
+
+    await runRefresh(env);
+
+    const row = await env.DB.prepare("SELECT status FROM videos WHERE video_id='v1'").first<any>();
+    expect(row.status).toBe("active");
+  });
+
   it("skips the API entirely when there is nothing to refresh", async () => {
     stubYouTube({ videos: [] });
     const result = await runRefresh(env);
@@ -511,8 +554,8 @@ describe("runRefresh", () => {
 });
 
 describe("jobForCron", () => {
-  it("routes the nightly schedule to refresh and everything else to discovery", () => {
-    expect(jobForCron("45 3 * * *")).toBe("refresh");
-    expect(jobForCron("*/20 * * * *")).toBe("discovery");
+  it("routes the :45 hourly schedule to refresh and everything else to discovery", () => {
+    expect(jobForCron("45 * * * *")).toBe("refresh");
+    expect(jobForCron("0 * * * *")).toBe("discovery");
   });
 });

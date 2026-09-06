@@ -30,6 +30,14 @@ describe("GET /status", () => {
     expect(body).toContain("vera-video-backend");
   });
 
+  it("renders the refresh check charts and the availability breakdown", async () => {
+    const res = await SELF.fetch(`https://backend.test/status?key=${env.STATUS_PAGE_KEY}`);
+    const body = await res.text();
+    expect(body).toContain("Refresh: videos checked per day");
+    expect(body).toContain("Refresh: marked unavailable per day");
+    expect(body).toContain("Catalog availability");
+  });
+
   it("defaults to a 30-day window and offers 7/30/90 range links with the key preserved", async () => {
     const res = await SELF.fetch(`https://backend.test/status?key=${env.STATUS_PAGE_KEY}`);
     const body = await res.text();
