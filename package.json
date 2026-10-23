@@ -16,7 +16,7 @@
     "db:migrate:remote": "wrangler d1 migrations apply vera-video --remote"
   },
   "dependencies": {
-    "hono": "^4.13.7"
+    "hono": "^4.13.11"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.18.7",
